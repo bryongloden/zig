@@ -2927,6 +2927,7 @@ static LLVMValueRef gen_const_val(CodeGen *g, TypeTableEntry *type_entry, ConstE
         case TypeTableEntryIdUndefLit:
         case TypeTableEntryIdVoid:
         case TypeTableEntryIdNamespace:
+        case TypeTableEntryIdGenericFn:
             zig_unreachable();
 
     }

@@ -223,6 +223,10 @@ void ast_print(FILE *f, AstNode *node, int indent) {
                 Buf *name_buf = &node->data.fn_proto.name;
                 fprintf(f, "%s '%s'\n", node_type_str(node->type), buf_ptr(name_buf));
 
+                for (int i = 0; i < node->data.fn_proto.generic_params.length; i += 1) {
+                    AstNode *child = node->data.fn_proto.generic_params.at(i);
+                    ast_print(f, child, indent + 2);
+                }
                 for (int i = 0; i < node->data.fn_proto.params.length; i += 1) {
                     AstNode *child = node->data.fn_proto.params.at(i);
                     ast_print(f, child, indent + 2);

@@ -2233,7 +2233,7 @@ static AstNode *ast_parse_block(ParseContext *pc, int *token_index, bool mandato
 }
 
 /*
-FnProto : "fn" option("Symbol") ParamDeclList option("->" PrefixOpExpression)
+FnProto = "fn" option("Symbol") option(ParamDeclList) ParamDeclList option("->" TypeExpr)
 */
 static AstNode *ast_parse_fn_proto(ParseContext *pc, int *token_index, bool mandatory,
         ZigList<AstNode*> *directives, VisibMod visib_mod)
@@ -2262,6 +2262,17 @@ static AstNode *ast_parse_fn_proto(ParseContext *pc, int *token_index, bool mand
     }
 
     ast_parse_param_decl_list(pc, token_index, &node->data.fn_proto.params, &node->data.fn_proto.is_var_args);
+
+    Token *maybe_lparen = &pc->tokens->at(*token_index);
+    if (maybe_lparen->id == TokenIdLParen) {
+        for (int i = 0; i < node->data.fn_proto.params.length; i += 1) {
+            node->data.fn_proto.generic_params.append(node->data.fn_proto.params.at(i));
+        }
+        node->data.fn_proto.generic_params_is_var_args = node->data.fn_proto.is_var_args;
+
+        node->data.fn_proto.params.resize(0);
+        ast_parse_param_decl_list(pc, token_index, &node->data.fn_proto.params, &node->data.fn_proto.is_var_args);
+    }
 
     Token *next_token = &pc->tokens->at(*token_index);
     if (next_token->id == TokenIdArrow) {
@@ -2638,6 +2649,7 @@ void normalize_parent_ptrs(AstNode *node) {
         case NodeTypeFnProto:
             set_field(&node->data.fn_proto.return_type);
             set_list_fields(node->data.fn_proto.top_level_decl.directives);
+            set_list_fields(&node->data.fn_proto.generic_params);
             set_list_fields(&node->data.fn_proto.params);
             break;
         case NodeTypeFnDef:

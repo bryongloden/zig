@@ -193,8 +193,10 @@ struct AstNodeRoot {
 struct AstNodeFnProto {
     TopLevelDecl top_level_decl;
     Buf name;
+    ZigList<AstNode *> generic_params;
     ZigList<AstNode *> params;
     AstNode *return_type;
+    bool generic_params_is_var_args;
     bool is_var_args;
     bool is_extern;
     bool is_inline;
@@ -206,6 +208,7 @@ struct AstNodeFnProto {
     FnTableEntry *fn_table_entry;
     bool skip;
     Expr resolved_expr;
+    TypeTableEntry *generic_fn_type;
 };
 
 struct AstNodeFnDef {
@@ -899,6 +902,10 @@ struct TypeTableEntryFn {
     LLVMCallConv calling_convention;
 };
 
+struct TypeTableEntryGenericFn {
+    AstNode *decl_node;
+};
+
 struct TypeTableEntryTypeDecl {
     TypeTableEntry *child_type;
     TypeTableEntry *canonical_type;
@@ -925,6 +932,7 @@ enum TypeTableEntryId {
     TypeTableEntryIdFn,
     TypeTableEntryIdTypeDecl,
     TypeTableEntryIdNamespace,
+    TypeTableEntryIdGenericFn,
 };
 
 struct TypeTableEntry {
@@ -947,6 +955,7 @@ struct TypeTableEntry {
         TypeTableEntryEnum enumeration;
         TypeTableEntryFn fn;
         TypeTableEntryTypeDecl type_decl;
+        TypeTableEntryGenericFn generic_fn;
     } data;
 
     // use these fields to make sure we don't duplicate type table entries for the same type
