@@ -800,6 +800,16 @@ struct FnTypeParamInfo {
     TypeTableEntry *type;
 };
 
+struct GenericParamValue {
+    TypeTableEntry *type;
+    AstNode *node;
+};
+
+struct GenericFnTypeId {
+    GenericParamValue *generic_params;
+    int generic_param_count;
+};
+
 static const int fn_type_id_prealloc_param_info_count = 4;
 struct FnTypeId {
     TypeTableEntry *return_type;

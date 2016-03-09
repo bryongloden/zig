@@ -4605,6 +4605,10 @@ static TypeTableEntry *analyze_generic_fn_call(CodeGen *g, ImportTableEntry *imp
         return g->builtin_types.entry_invalid;
     }
 
+    GenericFnTypeId generic_fn_type_id = {0};
+    generic_fn_type_id.generic_param_count = actual_param_count;
+    generic_fn_type_id.generic_params = allocate<GenericParamValue>(actual_param_count);
+
     BlockContext *child_context = parent_context;
     for (int i = 0; i < actual_param_count; i += 1) {
         AstNode *generic_param_decl_node = decl_node->data.fn_proto.generic_params.at(i);
@@ -4635,6 +4639,10 @@ static TypeTableEntry *analyze_generic_fn_call(CodeGen *g, ImportTableEntry *imp
             add_node_error(g, *param_node, buf_sprintf("unable to resolve constant expression"));
             return g->builtin_types.entry_invalid;
         }
+
+        GenericParamValue *generic_param_value = &generic_fn_type_id.generic_params[i];
+        generic_param_value->type = param_type;
+        generic_param_value->node = *param_node;
     }
 
     // make a type from the generic parameters supplied
