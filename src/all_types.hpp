@@ -230,6 +230,7 @@ struct AstNodeParamDecl {
     Buf name;
     AstNode *type;
     bool is_noalias;
+    bool is_inline;
 
     // populated by semantic analyzer
     VariableTableEntry *variable;
@@ -813,6 +814,7 @@ struct AsmToken {
 // this struct is allocated with allocate_nonzero
 struct FnTypeParamInfo {
     bool is_noalias;
+    bool is_inline;
     TypeTableEntry *type;
 };
 
@@ -840,6 +842,7 @@ struct FnTypeId {
     bool is_naked;
     bool is_cold;
     bool is_extern;
+    bool is_inline;
     FnTypeParamInfo prealloc_param_info[fn_type_id_prealloc_param_info_count];
 };
 
@@ -1062,7 +1065,6 @@ struct FnTableEntry {
     ZigList<LabelTableEntry *> all_labels;
     Buf symbol_name;
     TypeTableEntry *type_entry; // function type
-    bool is_inline;
     bool internal_linkage;
     bool is_extern;
     bool is_test;

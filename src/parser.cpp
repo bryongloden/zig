@@ -722,7 +722,7 @@ static void ast_parse_directives(ParseContext *pc, int *token_index,
 }
 
 /*
-ParamDecl = option("noalias") option("Symbol" ":") PrefixOpExpression | "..."
+ParamDecl = option("noalias" | "inline") option("Symbol" ":") TypeExpr | "..."
 */
 static AstNode *ast_parse_param_decl(ParseContext *pc, int *token_index) {
     Token *token = &pc->tokens->at(*token_index);
@@ -736,6 +736,10 @@ static AstNode *ast_parse_param_decl(ParseContext *pc, int *token_index) {
 
     if (token->id == TokenIdKeywordNoAlias) {
         node->data.param_decl.is_noalias = true;
+        *token_index += 1;
+        token = &pc->tokens->at(*token_index);
+    } else if (token->id == TokenIdKeywordInline) {
+        node->data.param_decl.is_inline = true;
         *token_index += 1;
         token = &pc->tokens->at(*token_index);
     }

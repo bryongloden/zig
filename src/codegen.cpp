@@ -3733,6 +3733,9 @@ static void delete_unused_builtin_fns(CodeGen *g) {
 }
 
 static bool skip_fn_codegen(CodeGen *g, FnTableEntry *fn_entry) {
+    if (fn_entry->type_entry->data.fn.fn_type_id.is_inline) {
+        return true;
+    }
     if (g->is_test_build) {
         if (fn_entry->is_test) {
             return false;
