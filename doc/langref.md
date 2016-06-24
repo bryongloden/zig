@@ -15,17 +15,11 @@ GlobalVarDecl = VariableDeclaration ";"
 
 VariableDeclaration = ("var" | "const") "Symbol" option(":" TypeExpr) "=" Expression
 
-ContainerDecl = ("struct" | "enum" | "union") "Symbol" option(ParamDeclList) "{" many(StructMember) "}"
-
-StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl | ContainerDecl)
-
-StructField = "Symbol" option(":" Expression) ",")
-
 UseDecl = "use" Expression ";"
 
 ExternDecl = "extern" (FnProto | VariableDeclaration) ";"
 
-FnProto = "fn" option("Symbol") option(ParamDeclList) ParamDeclList option("->" TypeExpr)
+FnProto = "fn" option("Symbol") ParamDeclList option("->" TypeExpr)
 
 Directive = "#" "Symbol" "(" Expression ")"
 
@@ -35,7 +29,7 @@ FnDef = option("inline" | "extern") FnProto Block
 
 ParamDeclList = "(" list(ParamDecl, ",") ")"
 
-ParamDecl = option("noalias") option("Symbol" ":") TypeExpr | "..."
+ParamDecl = option("noalias" | "inline") option("Symbol" ":") TypeExpr | "..."
 
 Block = "{" list(option(Statement), ";") "}"
 
@@ -143,7 +137,7 @@ StructLiteralField = "." "Symbol" "=" Expression
 
 PrefixOp = "!" | "-" | "~" | "*" | ("&" option("const")) | "?" | "%" | "%%" | "??"
 
-PrimaryExpression = "Number" | "String" | "CharLiteral" | KeywordLiteral | GroupedExpression | GotoExpression | BlockExpression | "Symbol" | ("@" "Symbol" FnCallExpression) | ArrayType | (option("extern") FnProto) | AsmExpression | ("error" "." "Symbol")
+PrimaryExpression = "Number" | "String" | "CharLiteral" | KeywordLiteral | GroupedExpression | GotoExpression | BlockExpression | "Symbol" | ("@" "Symbol" FnCallExpression) | ArrayType | (option("extern") FnProto) | AsmExpression | ("error" "." "Symbol") | ContainerExpression
 
 ArrayType = "[" option(Expression) "]" option("const") TypeExpr
 
@@ -152,6 +146,13 @@ GotoExpression = "goto" "Symbol"
 GroupedExpression = "(" Expression ")"
 
 KeywordLiteral = "true" | "false" | "null" | "break" | "continue" | "undefined" | "error" | "type"
+
+ContainerExpression = ("struct" | "enum" | "union") "{" many(StructMember) "}"
+
+StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl | ContainerDecl)
+
+StructField = "Symbol" option(":" Expression) ",")
+
 ```
 
 ## Operator Precedence

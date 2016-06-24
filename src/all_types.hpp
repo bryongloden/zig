@@ -179,7 +179,7 @@ enum NodeType {
     NodeTypeBreak,
     NodeTypeContinue,
     NodeTypeAsmExpr,
-    NodeTypeStructDecl,
+    NodeTypeContainerExpr,
     NodeTypeStructField,
     NodeTypeContainerInitExpr,
     NodeTypeStructValueField,
@@ -195,10 +195,8 @@ struct AstNodeRoot {
 struct AstNodeFnProto {
     TopLevelDecl top_level_decl;
     Buf name;
-    ZigList<AstNode *> generic_params;
     ZigList<AstNode *> params;
     AstNode *return_type;
-    bool generic_params_is_var_args;
     bool is_var_args;
     bool is_extern;
     bool is_inline;
@@ -230,6 +228,7 @@ struct AstNodeParamDecl {
     Buf name;
     AstNode *type;
     bool is_noalias;
+    bool is_inline;
 
     // populated by semantic analyzer
     VariableTableEntry *variable;
@@ -597,20 +596,15 @@ enum ContainerKind {
     ContainerKindUnion,
 };
 
-struct AstNodeStructDecl {
-    TopLevelDecl top_level_decl;
-    Buf name;
+struct AstNodeContainerExpr {
     ContainerKind kind;
-    ZigList<AstNode *> generic_params;
-    bool generic_params_is_var_args; // always an error but it can happen from parsing
     ZigList<AstNode *> fields;
     ZigList<AstNode *> decls;
 
     // populated by semantic analyzer
+    Expr resolved_expr;
     BlockContext *block_context;
     TypeTableEntry *type_entry;
-    TypeTableEntry *generic_fn_type;
-    bool skip;
 };
 
 struct AstNodeStructField {
@@ -779,7 +773,7 @@ struct AstNode {
         AstNodeGoto goto_expr;
         AstNodeAsmExpr asm_expr;
         AstNodeFieldAccessExpr field_access_expr;
-        AstNodeStructDecl struct_decl;
+        AstNodeContainerExpr container_expr;
         AstNodeStructField struct_field;
         AstNodeStringLiteral string_literal;
         AstNodeCharLiteral char_literal;
@@ -813,22 +807,9 @@ struct AsmToken {
 // this struct is allocated with allocate_nonzero
 struct FnTypeParamInfo {
     bool is_noalias;
+    bool is_inline;
     TypeTableEntry *type;
 };
-
-struct GenericParamValue {
-    TypeTableEntry *type;
-    AstNode *node;
-};
-
-struct GenericFnTypeId {
-    AstNode *decl_node; // the generic fn or container decl node
-    GenericParamValue *generic_params;
-    int generic_param_count;
-};
-
-uint32_t generic_fn_type_id_hash(GenericFnTypeId *id);
-bool generic_fn_type_id_eql(GenericFnTypeId *a, GenericFnTypeId *b);
 
 
 static const int fn_type_id_prealloc_param_info_count = 4;
@@ -840,6 +821,7 @@ struct FnTypeId {
     bool is_naked;
     bool is_cold;
     bool is_extern;
+    bool is_inline;
     FnTypeParamInfo prealloc_param_info[fn_type_id_prealloc_param_info_count];
 };
 
@@ -949,10 +931,6 @@ struct TypeTableEntryFn {
     LLVMCallConv calling_convention;
 };
 
-struct TypeTableEntryGenericFn {
-    AstNode *decl_node;
-};
-
 struct TypeTableEntryTypeDecl {
     TypeTableEntry *child_type;
     TypeTableEntry *canonical_type;
@@ -980,7 +958,6 @@ enum TypeTableEntryId {
     TypeTableEntryIdFn,
     TypeTableEntryIdTypeDecl,
     TypeTableEntryIdNamespace,
-    TypeTableEntryIdGenericFn,
 };
 
 struct TypeTableEntry {
@@ -1005,7 +982,6 @@ struct TypeTableEntry {
         TypeTableEntryUnion unionation;
         TypeTableEntryFn fn;
         TypeTableEntryTypeDecl type_decl;
-        TypeTableEntryGenericFn generic_fn;
     } data;
 
     // use these fields to make sure we don't duplicate type table entries for the same type
@@ -1062,7 +1038,6 @@ struct FnTableEntry {
     ZigList<LabelTableEntry *> all_labels;
     Buf symbol_name;
     TypeTableEntry *type_entry; // function type
-    bool is_inline;
     bool internal_linkage;
     bool is_extern;
     bool is_test;
@@ -1167,7 +1142,6 @@ struct CodeGen {
     HashMap<Buf *, TypeTableEntry *, buf_hash, buf_eql_buf> primitive_type_table;
     HashMap<FnTypeId *, TypeTableEntry *, fn_type_id_hash, fn_type_id_eql> fn_type_table;
     HashMap<Buf *, ErrorTableEntry *, buf_hash, buf_eql_buf> error_table;
-    HashMap<GenericFnTypeId *, AstNode *, generic_fn_type_id_hash, generic_fn_type_id_eql> generic_table;
 
     ZigList<ImportTableEntry *> import_queue;
     int import_queue_index;

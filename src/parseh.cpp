@@ -936,21 +936,20 @@ static void visit_enum_decl(Context *c, const EnumDecl *enum_decl) {
     if (enum_type->id == TypeTableEntryIdEnum) {
         if (enum_type->data.enumeration.complete) {
             // now create top level decl for the type
-            AstNode *enum_node = create_node(c, NodeTypeStructDecl);
-            buf_init_from_buf(&enum_node->data.struct_decl.name, &enum_type->name);
-            enum_node->data.struct_decl.kind = ContainerKindEnum;
-            enum_node->data.struct_decl.top_level_decl.visib_mod = VisibModExport;
-            enum_node->data.struct_decl.type_entry = enum_type;
+            AstNode *enum_node = create_node(c, NodeTypeContainerExpr);
+            enum_node->data.container_expr.kind = ContainerKindEnum;
+            enum_node->data.container_expr.type_entry = enum_type;
 
+            AstNode *var_node = create_var_decl_node(c, buf_ptr(&enum_type->name), enum_node);
             for (uint32_t i = 0; i < enum_type->data.enumeration.field_count; i += 1) {
                 TypeEnumField *type_enum_field = &enum_type->data.enumeration.fields[i];
                 AstNode *type_node = make_type_node(c, type_enum_field->type_entry);
                 AstNode *field_node = create_struct_field_node(c, buf_ptr(type_enum_field->name), type_node);
-                enum_node->data.struct_decl.fields.append(field_node);
+                enum_node->data.container_expr.fields.append(field_node);
             }
 
             normalize_parent_ptrs(enum_node);
-            c->root->data.root.top_level_decls.append(enum_node);
+            c->root->data.root.top_level_decls.append(var_node);
         } else {
             TypeTableEntry *typedecl_type = get_typedecl_type(c->codegen, buf_ptr(&enum_type->name),
                     c->codegen->builtin_types.entry_u8);
@@ -1113,21 +1112,20 @@ static void visit_record_decl(Context *c, const RecordDecl *record_decl) {
 
     if (struct_type->data.structure.complete) {
         // now create a top level decl node for the type
-        AstNode *struct_node = create_node(c, NodeTypeStructDecl);
-        buf_init_from_buf(&struct_node->data.struct_decl.name, &struct_type->name);
-        struct_node->data.struct_decl.kind = ContainerKindStruct;
-        struct_node->data.struct_decl.top_level_decl.visib_mod = VisibModExport;
-        struct_node->data.struct_decl.type_entry = struct_type;
+        AstNode *struct_node = create_node(c, NodeTypeContainerExpr);
+        struct_node->data.container_expr.kind = ContainerKindStruct;
+        struct_node->data.container_expr.type_entry = struct_type;
 
+        AstNode *var_node = create_var_decl_node(c, buf_ptr(&struct_type->name), struct_node);
         for (uint32_t i = 0; i < struct_type->data.structure.src_field_count; i += 1) {
             TypeStructField *type_struct_field = &struct_type->data.structure.fields[i];
             AstNode *type_node = make_type_node(c, type_struct_field->type_entry);
             AstNode *field_node = create_struct_field_node(c, buf_ptr(type_struct_field->name), type_node);
-            struct_node->data.struct_decl.fields.append(field_node);
+            struct_node->data.container_expr.fields.append(field_node);
         }
 
         normalize_parent_ptrs(struct_node);
-        c->root->data.root.top_level_decls.append(struct_node);
+        c->root->data.root.top_level_decls.append(var_node);
     } else {
         TypeTableEntry *typedecl_type = get_typedecl_type(c->codegen, buf_ptr(&struct_type->name),
                 c->codegen->builtin_types.entry_u8);

@@ -80,10 +80,89 @@ pub struct OutStream {
         return bytes.len;
     }
 
+    pub fn write_byte(os: &OutStream, byte: u8) -> %isize {
+        os.buffer[os.index] = byte;
+        if (os.index == os.buffer.len) %return os.flush();
+        return 1;
+    }
+
+    enum State {
+        Start,
+        BytesBuffered,
+        SawPercent,
+    }
+
+    /// Writes formatted bytes to the buffer, and flushes only if the buffer becomes full.
+    pub inline fn print(os: &OutStream, inline format: []const u8, args: []var) -> %isize {
+        var state = State.Start;
+        var bytes_printed: isize = 0;
+        var buf_start: isize = undefined;
+        var next_arg: isize = 0;
+        inline for (format) |c, i| {
+            switch (state) {
+                Start => {
+                    switch (c) {
+                        '%' => {
+                            state = State.SawPercent;
+                        },
+                        else => {
+                            buf_start = i;
+                            state = State.BytesBuffered;
+                        },
+                    }
+                },
+                BytesBuffered => {
+                    switch (c) {
+                        '%' => {
+                            bytes_printed += %return os.write(format[buf_start...i]);
+                            state = State.SawPercent;
+                        },
+                        else => {},
+                    }
+                },
+                SawPercent => {
+                    switch (c) {
+                        'i' => {
+                            const arg = args[next_arg];
+                            next_arg += 1;
+                            // TODO bound methods
+                            bytes_printed += %return OutStream.print_int(@typeof(arg))(os, arg);
+                        },
+                        'f' => {
+                            const arg = args[next_arg];
+                            next_arg += 1;
+                            // TODO bound methods
+                            bytes_printed += %return OutStream.print_float(@typeof(arg))(os, arg);
+                        },
+                        '%' => {
+                            bytes_printed += %return os.write_byte('%');
+                        },
+                        's' => {
+                            const arg = args[next_arg];
+                            next_arg += 1;
+                            bytes_printed += %return os.write(arg);
+                        },
+                        else => @compile_err("invalid replacement: '%" ++ c ++ "'"),
+                    }
+                    state = State.Start;
+                },
+            }
+        }
+        switch (state) {
+            Start => {},
+            BytesBuffered => {
+                bytes_printed += %return os.write(format[buf_start...]);
+            },
+            SawPercent => @compile_err("expected character after '%'"),
+        }
+        if (next_arg != args.len) @compile_err("extra argument");
+        return bytes_printed;
+    }
+
     /// Prints a byte buffer, flushes the buffer, then returns the number of
     /// bytes printed. The "f" is for "flush".
-    pub fn printf(os: &OutStream, str: []const u8) -> %isize {
-        const byte_count = %return os.write(str);
+    pub inline fn printf(os: &OutStream, inline format: []const u8, args: []var) -> %isize {
+        const byte_count = %return os.print(format, args);
         %return os.flush();
         return byte_count;
     }
@@ -248,7 +327,11 @@ fn char_to_digit(c: u8) -> u8 {
     }
 }
 
-pub fn buf_print_signed(T: type)(out_buf: []u8, x: T) -> isize {
+pub fn buf_print_int(T: type)(out_buf: []u8, x: T) -> isize {
+    if (T.is_signed) buf_print_signed(T)(out_buf, x) else buf_print_unsigned(T)(out_buf, x)
+}
+
+fn buf_print_signed(T: type)(out_buf: []u8, x: T) -> isize {
     const uint = @int_type(false, T.bit_count, false);
     if (x < 0) {
         out_buf[0] = '-';
@@ -258,9 +341,7 @@ pub fn buf_print_signed(T: type)(out_buf: []u8, x: T) -> isize {
     }
 }
 
-pub const buf_print_i64 = buf_print_signed(i64);
-
-pub fn buf_print_unsigned(T: type)(out_buf: []u8, x: T) -> isize {
+fn buf_print_unsigned(T: type)(out_buf: []u8, x: T) -> isize {
     var buf: [max_u64_base10_digits]u8 = undefined;
     var a = x;
     var index: isize = buf.len;
@@ -279,132 +360,6 @@ pub fn buf_print_unsigned(T: type)(out_buf: []u8, x: T) -> isize {
     @memcpy(&out_buf[0], &buf[index], len);
 
     return len;
-}
-
-pub const buf_print_u64 = buf_print_unsigned(u64);
-
-pub fn buf_print_f64(out_buf: []u8, x: f64, decimals: isize) -> isize {
-    const numExpBits = 11;
-    const numRawSigBits = 52; // not including implicit 1 bit
-    const expBias = 1023;
-
-    var decs = decimals;
-    if (decs >= max_u64_base10_digits) {
-        decs = max_u64_base10_digits - 1;
-    }
-
-    if (x == math.f64_get_pos_inf()) {
-        const buf2 = "+Inf";
-        @memcpy(&out_buf[0], &buf2[0], buf2.len);
-        return 4;
-    } else if (x == math.f64_get_neg_inf()) {
-        const buf2 = "-Inf";
-        @memcpy(&out_buf[0], &buf2[0], buf2.len);
-        return 4;
-    } else if (math.f64_is_nan(x)) {
-        const buf2 = "NaN";
-        @memcpy(&out_buf[0], &buf2[0], buf2.len);
-        return 3;
-    }
-
-    var buf: [max_f64_digits]u8 = undefined;
-
-    var len: isize = 0;
-
-    // 1 sign bit
-    // 11 exponent bits
-    // 52 significand bits (+ 1 implicit always non-zero bit)
-
-    const bits = math.f64_to_bits(x);
-    if (bits & (1 << 63) != 0) {
-        buf[0] = '-';
-        len += 1;
-    }
-
-    const rexponent: i64 = i64((bits >> numRawSigBits) & ((1 << numExpBits) - 1));
-    const exponent = rexponent - expBias - numRawSigBits;
-
-    if (rexponent == 0) {
-        buf[len] = '0';
-        len += 1;
-        @memcpy(&out_buf[0], &buf[0], len);
-        return len;
-    }
-
-    const sig = (bits & ((1 << numRawSigBits) - 1)) | (1 << numRawSigBits);
-
-    if (exponent >= 0) {
-        // number is an integer
-
-        if (exponent >= 64 - 53) {
-            // use XeX form
-
-            // TODO support printing large floats
-            //len += buf_print_u64(buf[len...], sig << 10);
-            const str = "LARGEF64";
-            @memcpy(&buf[len], &str[0], str.len);
-            len += str.len;
-        } else {
-            // use typical form
-
-            len += buf_print_u64(buf[len...], sig << u64(exponent));
-            buf[len] = '.';
-            len += 1;
-
-            var i: isize = 0;
-            while (i < decs) {
-                buf[len] = '0';
-                len += 1;
-                i += 1;
-            }
-        }
-    } else {
-        // number is not an integer
-
-        // print out whole part
-        len += buf_print_u64(buf[len...], sig >> u64(-exponent));
-        buf[len] = '.';
-        len += 1;
-
-        // print out fractional part
-        // dec_num holds: fractional part * 10 ^ decs
-        var dec_num: u64 = 0;
-
-        var a: isize = 1;
-        var i: isize = 0;
-        while (i < decs + 5) {
-            a *= 10;
-            i += 1;
-        }
-
-        // create a mask: 1's for the fractional part, 0's for whole part
-        var masked_sig = sig & ((1 << u64(-exponent)) - 1);
-        i = -1;
-        while (i >= exponent) {
-            var bit_set = ((1 << u64(i-exponent)) & masked_sig) != 0;
-
-            if (bit_set) {
-                dec_num += usize(a) >> usize(-i);
-            }
-
-            i -= 1;
-        }
-
-        dec_num /= 100000;
-
-        len += decs;
-
-        i = len - 1;
-        while (i >= len - decs) {
-            buf[i] = '0' + u8(dec_num % 10);
-            dec_num /= 10;
-            i -= 1;
-        }
-    }
-
-    @memcpy(&out_buf[0], &buf[0], len);
-
-    len
 }
 
 #attribute("test")

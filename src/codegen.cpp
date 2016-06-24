@@ -62,7 +62,6 @@ CodeGen *codegen_create(Buf *root_source_dir, const ZigTarget *target) {
     g->primitive_type_table.init(32);
     g->fn_type_table.init(32);
     g->error_table.init(16);
-    g->generic_table.init(16);
     g->is_release_build = false;
     g->is_test_build = false;
 
@@ -3467,6 +3466,7 @@ static LLVMValueRef gen_expr(CodeGen *g, AstNode *node) {
             return gen_container_init_expr(g, node);
         case NodeTypeSwitchExpr:
             return gen_switch_expr(g, node);
+        case NodeTypeContainerExpr:
         case NodeTypeNumberLiteral:
         case NodeTypeBoolLiteral:
         case NodeTypeStringLiteral:
@@ -3485,7 +3485,6 @@ static LLVMValueRef gen_expr(CodeGen *g, AstNode *node) {
         case NodeTypeParamDecl:
         case NodeTypeDirective:
         case NodeTypeUse:
-        case NodeTypeStructDecl:
         case NodeTypeStructField:
         case NodeTypeStructValueField:
         case NodeTypeSwitchProng:
@@ -3686,7 +3685,6 @@ static LLVMValueRef gen_const_val(CodeGen *g, TypeTableEntry *type_entry, ConstE
         case TypeTableEntryIdUndefLit:
         case TypeTableEntryIdVoid:
         case TypeTableEntryIdNamespace:
-        case TypeTableEntryIdGenericFn:
             zig_unreachable();
 
     }
@@ -3733,6 +3731,9 @@ static void delete_unused_builtin_fns(CodeGen *g) {
 }
 
 static bool skip_fn_codegen(CodeGen *g, FnTableEntry *fn_entry) {
+    if (fn_entry->type_entry->data.fn.fn_type_id.is_inline) {
+        return true;
+    }
     if (g->is_test_build) {
         if (fn_entry->is_test) {
             return false;

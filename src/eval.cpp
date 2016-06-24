@@ -53,7 +53,6 @@ bool const_values_equal(ConstExprValue *a, ConstExprValue *b, TypeTableEntry *ty
             zig_panic("TODO");
         case TypeTableEntryIdNamespace:
             zig_panic("TODO");
-        case TypeTableEntryIdGenericFn:
         case TypeTableEntryIdInvalid:
         case TypeTableEntryIdUnreachable:
             zig_unreachable();
@@ -1259,7 +1258,7 @@ static bool eval_expr(EvalFn *ef, AstNode *node, ConstExprValue *out) {
         case NodeTypeGoto:
         case NodeTypeBreak:
         case NodeTypeContinue:
-        case NodeTypeStructDecl:
+        case NodeTypeContainerExpr:
         case NodeTypeStructField:
         case NodeTypeStructValueField:
         case NodeTypeArrayType:
