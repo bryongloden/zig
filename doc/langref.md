@@ -5,7 +5,7 @@
 ```
 Root = many(TopLevelDecl) "EOF"
 
-TopLevelDecl = many(Directive) option(VisibleMod) (FnDef | ExternDecl | ContainerDecl | GlobalVarDecl | ErrorValueDecl | TypeDecl | UseDecl)
+TopLevelDecl = many(Directive) option(VisibleMod) (FnDef | ExternDecl | GlobalVarDecl | ErrorValueDecl | TypeDecl | UseDecl)
 
 TypeDecl = "type" "Symbol" "=" TypeExpr ";"
 
@@ -149,7 +149,7 @@ KeywordLiteral = "true" | "false" | "null" | "break" | "continue" | "undefined" 
 
 ContainerExpression = ("struct" | "enum" | "union") "{" many(StructMember) "}"
 
-StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl | ContainerDecl)
+StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl)
 
 StructField = "Symbol" option(":" Expression) ",")
 

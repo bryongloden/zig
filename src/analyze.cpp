@@ -823,7 +823,6 @@ static TypeTableEntry *resolve_type(CodeGen *g, AstNode *node) {
     } else if (expr->type_entry->id == TypeTableEntryIdMetaType) {
         // OK
     } else {
-        BREAKPOINT;
         add_node_error(g, node, buf_sprintf("expected type, found expression"));
         return g->builtin_types.entry_invalid;
     }
@@ -841,9 +840,6 @@ static TypeTableEntry *analyze_type_expr_pointer_only(CodeGen *g, ImportTableEnt
         BlockContext *context, AstNode *node, bool pointer_only)
 {
     AstNode **node_ptr = node->parent_field;
-    if (node->create_index == 31) {
-        BREAKPOINT;
-    }
     analyze_expression_pointer_only(g, import, context, nullptr, *node_ptr, pointer_only);
     return resolve_type(g, *node_ptr);
 }
@@ -1514,10 +1510,6 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
     struct_type->di_type = replacement_di_type;
 
     struct_type->zero_bits = (debug_size_in_bits == 0);
-}
-
-static void resolve_union_type(CodeGen *g, ImportTableEntry *import, TypeTableEntry *enum_type) {
-    zig_panic("TODO");
 }
 
 static void get_fully_qualified_decl_name(Buf *buf, AstNode *decl_node, uint8_t sep) {
@@ -5952,30 +5944,31 @@ static TypeTableEntry *analyze_asm_expr(CodeGen *g, ImportTableEntry *import, Bl
     return return_type;
 }
 
-static TypeTableEntry *analyze_container_expr(CodeGen *g, ImportTableEntry *import, BlockContext *context,
+static TypeTableEntry *analyze_container_expr(CodeGen *g, ImportTableEntry *import, BlockContext *parent_context,
         TypeTableEntry *expected_type, AstNode *node)
 {
     assert(node->type == NodeTypeContainerExpr);
 
-    zig_panic("TODO this function should instead create a forward decl type");
-    // TODO then add the type to a list to process later
-    // and do what scan_decls used to do on the struct adding those to process later
+    // TODO if this is already defined I think we need to do the override thing?
+    assert(!node->data.container_expr.type_entry);
 
-    TypeTableEntry *type_entry = node->data.container_expr.type_entry;
-    assert(type_entry);
+    ContainerKind kind = node->data.container_expr.kind;
+    TypeTableEntry *container_type = get_partial_container_type(g, import, parent_context, kind, node, "TODO");
 
-    switch (node->data.container_expr.kind) {
-        case ContainerKindStruct:
-            resolve_struct_type(g, import, type_entry);
-            return type_entry;
-        case ContainerKindEnum:
-            resolve_enum_type(g, import, type_entry);
-            return type_entry;
-        case ContainerKindUnion:
-            resolve_union_type(g, import, type_entry);
-            return type_entry;
+    node->data.container_expr.type_entry = container_type;
+
+    for (int i = 0; i < node->data.container_expr.decls.length; i += 1) {
+        AstNode *child_node = node->data.container_expr.decls.at(i);
+        get_as_top_level_decl(child_node)->parent_decl = node;
+        BlockContext *child_context = get_container_block_context(container_type);
+        scan_decls(g, import, child_context, child_node);
     }
-    zig_unreachable();
+
+    Expr *expr = get_resolved_expr(node);
+    expr->const_val.ok = true;
+    expr->const_val.data.x_type = container_type;
+
+    return g->builtin_types.entry_type;
 }
 
 static TypeTableEntry *analyze_goto_pass1(CodeGen *g, ImportTableEntry *import, BlockContext *context,

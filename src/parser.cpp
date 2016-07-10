@@ -2635,7 +2635,7 @@ static AstNode *ast_parse_use(ParseContext *pc, int *token_index,
 
 /*
 ContainerExpression = ("struct" | "enum" | "union") "{" many(StructMember) "}"
-StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl | ContainerDecl)
+StructMember = many(Directive) option(VisibleMod) (StructField | FnDef | GlobalVarDecl)
 StructField : "Symbol" option(":" Expression) ",")
 */
 static AstNode *ast_parse_container_expr(ParseContext *pc, int *token_index) {
@@ -2783,7 +2783,7 @@ static AstNode *ast_parse_type_decl(ParseContext *pc, int *token_index,
 }
 
 /*
-TopLevelDecl = many(Directive) option(VisibleMod) (FnDef | ExternDecl | Import | ContainerDecl | GlobalVarDecl | ErrorValueDecl | CImportDecl | TypeDecl)
+TopLevelDecl = many(Directive) option(VisibleMod) (FnDef | ExternDecl | GlobalVarDecl | ErrorValueDecl | TypeDecl | UseDecl)
 */
 static void ast_parse_top_level_decls(ParseContext *pc, int *token_index, ZigList<AstNode *> *top_level_decls) {
     for (;;) {
