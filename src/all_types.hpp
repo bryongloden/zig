@@ -29,6 +29,7 @@ struct BuiltinFnEntry;
 struct TypeStructField;
 struct CodeGen;
 struct ConstExprValue;
+struct TypeAlias;
 
 enum OutType {
     OutTypeUnknown,
@@ -71,7 +72,7 @@ struct ConstExprValue {
         BigNum x_bignum;
         bool x_bool;
         FnTableEntry *x_fn;
-        TypeTableEntry *x_type;
+        TypeAlias *x_type;
         ConstExprValue *x_maybe;
         ConstErrValue x_err;
         ConstEnumValue x_enum;
@@ -135,7 +136,7 @@ struct TopLevelDecl {
 
 struct TypeEnumField {
     Buf *name;
-    TypeTableEntry *type_entry;
+    TypeAlias *type_alias;
     uint32_t value; // TODO is this used?
 };
 
@@ -295,8 +296,8 @@ struct AstNodeTypeDecl {
     // populated by semantic analyzer
     // if this is set, don't process the node; we've already done so
     // and here is the type (with id TypeTableEntryIdTypeDecl)
-    TypeTableEntry *override_type;
-    TypeTableEntry *child_type_entry;
+    TypeAlias *override_type;
+    TypeAlias *child_type_entry;
 };
 
 struct AstNodeErrorValueDecl {
@@ -691,7 +692,7 @@ struct AstNodeSymbolExpr {
     // populated by semantic analyzer
     Expr resolved_expr;
     // set this to instead of analyzing the node, pretend it's a type entry and it's this one.
-    TypeTableEntry *override_type_entry;
+    TypeAlias *override_type_entry;
     TypeEnumField *enum_field;
     uint32_t err_value;
 };
@@ -850,7 +851,7 @@ struct TypeTableEntryArray {
 
 struct TypeStructField {
     Buf *name;
-    TypeTableEntry *type_entry;
+    TypeAlias *type_alias;
     int src_index;
     int gen_index;
 };
@@ -960,12 +961,30 @@ enum TypeTableEntryId {
     TypeTableEntryIdNamespace,
 };
 
+// This struct serves to give better debugging symbols due to the fact that all
+// containers are anonymous. Whenever a type is aliased we create a TypeAlias
+// entry.
+struct TypeAlias {
+    TypeTableEntry *root;
+    TypeAlias *parent;
+    ZigLLVMDIType *di_type;
+    Buf *name;
+
+    // use these fields to make sure we don't duplicate type table entries for the same type
+    TypeAlias *pointer_parent[2];
+    TypeAlias *unknown_size_array_parent[2];
+    HashMap<uint64_t, TypeAlias *, uint64_hash, uint64_eq> arrays_by_size;
+    TypeAlias *maybe_parent;
+    TypeAlias *error_parent;
+
+};
+
 struct TypeTableEntry {
     TypeTableEntryId id;
     Buf name;
 
     LLVMTypeRef type_ref;
-    LLVMZigDIType *di_type;
+    ZigLLVMDIType *di_type;
 
     bool zero_bits;
     bool deep_const;
@@ -984,12 +1003,8 @@ struct TypeTableEntry {
         TypeTableEntryTypeDecl type_decl;
     } data;
 
-    // use these fields to make sure we don't duplicate type table entries for the same type
-    TypeTableEntry *pointer_parent[2];
-    TypeTableEntry *unknown_size_array_parent[2];
-    HashMap<uint64_t, TypeTableEntry *, uint64_hash, uint64_eq> arrays_by_size;
-    TypeTableEntry *maybe_parent;
-    TypeTableEntry *error_parent;
+    // Since every type has at least one alias, we preallocate one here.
+    TypeAlias root_alias;
 };
 
 struct PackageTableEntry {
@@ -1004,7 +1019,7 @@ struct ImportTableEntry {
     AstNode *root;
     Buf *path; // relative to root_package->root_src_dir
     PackageTableEntry *package;
-    LLVMZigDIFile *di_file;
+    ZigLLVMDIFile *di_file;
     Buf *source_code;
     ZigList<int> *line_offsets;
     BlockContext *block_context;
@@ -1131,8 +1146,8 @@ struct CodeGen {
     LLVMModuleRef module;
     ZigList<ErrorMsg*> errors;
     LLVMBuilderRef builder;
-    LLVMZigDIBuilder *dbuilder;
-    LLVMZigDICompileUnit *compile_unit;
+    ZigLLVMDIBuilder *dbuilder;
+    ZigLLVMDICompileUnit *compile_unit;
 
     ZigList<Buf *> link_libs; // non-libc link libs
 
@@ -1207,7 +1222,7 @@ struct CodeGen {
     uint32_t target_arch_index;
     uint32_t target_environ_index;
     LLVMTargetMachineRef target_machine;
-    LLVMZigDIFile *dummy_di_file;
+    ZigLLVMDIFile *dummy_di_file;
     bool is_native_target;
     PackageTableEntry *root_package;
     PackageTableEntry *std_package;
@@ -1269,14 +1284,14 @@ struct CodeGen {
 
 struct VariableTableEntry {
     Buf name;
-    TypeTableEntry *type;
+    TypeAlias *type_alias;
     LLVMValueRef value_ref;
     bool is_const;
     // which node is the declaration of the variable
     AstNode *decl_node;
     // which node contains the ConstExprValue for this variable's value
     AstNode *val_node;
-    LLVMZigDILocalVariable *di_loc_var;
+    ZigLLVMDILocalVariable *di_loc_var;
     int src_arg_index;
     int gen_arg_index;
     BlockContext *block_context;
@@ -1315,7 +1330,7 @@ struct BlockContext {
     // it would pertain to
     AstNode *parent_loop_node;
 
-    LLVMZigDIScope *di_scope;
+    ZigLLVMDIScope *di_scope;
     Buf *c_import_buf;
 
     // if this is true, then this code will not be generated

@@ -233,7 +233,7 @@ static void print_indent(AstRender *ar) {
 static bool is_node_void(AstNode *node) {
     if (node->type == NodeTypeSymbol) {
         if (node->data.symbol_expr.override_type_entry) {
-            return node->data.symbol_expr.override_type_entry->id == TypeTableEntryIdVoid;
+            return node->data.symbol_expr.override_type_entry->root->id == TypeTableEntryIdVoid;
         } else if (buf_eql_str(&node->data.symbol_expr.symbol, "void")) {
             return true;
         }
@@ -481,7 +481,7 @@ static void render_node(AstRender *ar, AstNode *node) {
             }
         case NodeTypeSymbol:
             {
-                TypeTableEntry *override_type = node->data.symbol_expr.override_type_entry;
+                TypeTableEntry *override_type = node->data.symbol_expr.override_type_entry->root;
                 if (override_type) {
                     fprintf(ar->f, "%s", buf_ptr(&override_type->name));
                 } else {

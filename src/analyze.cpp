@@ -152,6 +152,7 @@ TypeTableEntry *new_type_table_entry(TypeTableEntryId id) {
     TypeTableEntry *entry = allocate<TypeTableEntry>(1);
     entry->arrays_by_size.init(2);
     entry->id = id;
+    entry->root_alias.root = entry;
     return entry;
 }
 
@@ -244,21 +245,21 @@ TypeTableEntry *get_smallest_unsigned_int_type(CodeGen *g, uint64_t x) {
     return get_int_type(g, false, false, bits_needed_for_unsigned(x));
 }
 
-TypeTableEntry *get_pointer_to_type(CodeGen *g, TypeTableEntry *child_type, bool is_const) {
-    assert(child_type->id != TypeTableEntryIdInvalid);
-    TypeTableEntry **parent_pointer = &child_type->pointer_parent[(is_const ? 1 : 0)];
+TypeAlias *get_pointer_to_type(CodeGen *g, TypeAlias *child_type, bool is_const) {
+    assert(child_type->root->id != TypeTableEntryIdInvalid);
+    TypeAlias **parent_pointer = &child_type->pointer_parent[(is_const ? 1 : 0)];
     if (*parent_pointer) {
         return *parent_pointer;
     } else {
         TypeTableEntry *entry = new_type_table_entry(TypeTableEntryIdPointer);
 
-        entry->deep_const = is_const && child_type->deep_const;
+        entry->deep_const = is_const && child_type->root->deep_const;
 
         const char *const_str = is_const ? "const " : "";
         buf_resize(&entry->name, 0);
-        buf_appendf(&entry->name, "&%s%s", const_str, buf_ptr(&child_type->name));
+        buf_appendf(&entry->name, "&%s%s", const_str, buf_ptr(child_type->name));
 
-        TypeTableEntry *canon_child_type = get_underlying_type(child_type);
+        TypeTableEntry *canon_child_type = get_underlying_type(child_type->root);
         assert(canon_child_type->id != TypeTableEntryIdInvalid);
 
 
@@ -269,12 +270,12 @@ TypeTableEntry *get_pointer_to_type(CodeGen *g, TypeTableEntry *child_type, bool
         }
 
         if (!entry->zero_bits) {
-            entry->type_ref = LLVMPointerType(child_type->type_ref, 0);
+            entry->type_ref = LLVMPointerType(child_type->root->type_ref, 0);
 
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
             assert(child_type->di_type);
-            entry->di_type = LLVMZigCreateDebugPointerType(g->dbuilder, child_type->di_type,
+            entry->di_type = ZigLLVMCreateDebugPointerType(g->dbuilder, child_type->di_type,
                     debug_size_in_bits, debug_align_in_bits, buf_ptr(&entry->name));
         }
 
@@ -317,11 +318,11 @@ TypeTableEntry *get_maybe_type(CodeGen *g, TypeTableEntry *child_type) {
             entry->type_ref = LLVMStructType(elem_types, 2, false);
 
 
-            LLVMZigDIScope *compile_unit_scope = LLVMZigCompileUnitToScope(g->compile_unit);
-            LLVMZigDIFile *di_file = nullptr;
+            ZigLLVMDIScope *compile_unit_scope = ZigLLVMCompileUnitToScope(g->compile_unit);
+            ZigLLVMDIFile *di_file = nullptr;
             unsigned line = 0;
-            entry->di_type = LLVMZigCreateReplaceableCompositeType(g->dbuilder,
-                LLVMZigTag_DW_structure_type(), buf_ptr(&entry->name),
+            entry->di_type = ZigLLVMCreateReplaceableCompositeType(g->dbuilder,
+                ZigLLVMTag_DW_structure_type(), buf_ptr(&entry->name),
                 compile_unit_scope, di_file, line);
 
             uint64_t val_debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, child_type->type_ref);
@@ -336,27 +337,27 @@ TypeTableEntry *get_maybe_type(CodeGen *g, TypeTableEntry *child_type) {
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
 
-            LLVMZigDIType *di_element_types[] = {
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+            ZigLLVMDIType *di_element_types[] = {
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "val", di_file, line,
                         val_debug_size_in_bits,
                         val_debug_align_in_bits,
                         val_offset_in_bits,
                         0, child_type->di_type),
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "maybe", di_file, line,
                         maybe_debug_size_in_bits,
                         maybe_debug_align_in_bits,
                         maybe_offset_in_bits,
                         0, child_type->di_type),
             };
-            LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
+            ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
                     compile_unit_scope,
                     buf_ptr(&entry->name),
                     di_file, line, debug_size_in_bits, debug_align_in_bits, 0,
                     nullptr, di_element_types, 2, 0, nullptr, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
             entry->di_type = replacement_di_type;
         }
 
@@ -393,11 +394,11 @@ static TypeTableEntry *get_error_type(CodeGen *g, TypeTableEntry *child_type) {
             };
             entry->type_ref = LLVMStructType(elem_types, 2, false);
 
-            LLVMZigDIScope *compile_unit_scope = LLVMZigCompileUnitToScope(g->compile_unit);
-            LLVMZigDIFile *di_file = nullptr;
+            ZigLLVMDIScope *compile_unit_scope = ZigLLVMCompileUnitToScope(g->compile_unit);
+            ZigLLVMDIFile *di_file = nullptr;
             unsigned line = 0;
-            entry->di_type = LLVMZigCreateReplaceableCompositeType(g->dbuilder,
-                LLVMZigTag_DW_structure_type(), buf_ptr(&entry->name),
+            entry->di_type = ZigLLVMCreateReplaceableCompositeType(g->dbuilder,
+                ZigLLVMTag_DW_structure_type(), buf_ptr(&entry->name),
                 compile_unit_scope, di_file, line);
 
             uint64_t tag_debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, g->err_tag_type->type_ref);
@@ -411,14 +412,14 @@ static TypeTableEntry *get_error_type(CodeGen *g, TypeTableEntry *child_type) {
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
 
-            LLVMZigDIType *di_element_types[] = {
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+            ZigLLVMDIType *di_element_types[] = {
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "tag", di_file, line,
                         tag_debug_size_in_bits,
                         tag_debug_align_in_bits,
                         tag_offset_in_bits,
                         0, child_type->di_type),
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "value", di_file, line,
                         value_debug_size_in_bits,
                         value_debug_align_in_bits,
@@ -426,7 +427,7 @@ static TypeTableEntry *get_error_type(CodeGen *g, TypeTableEntry *child_type) {
                         0, child_type->di_type),
             };
 
-            LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
+            ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
                     compile_unit_scope,
                     buf_ptr(&entry->name),
                     di_file, line,
@@ -435,7 +436,7 @@ static TypeTableEntry *get_error_type(CodeGen *g, TypeTableEntry *child_type) {
                     0,
                     nullptr, di_element_types, 2, 0, nullptr, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
             entry->di_type = replacement_di_type;
         }
 
@@ -462,7 +463,7 @@ TypeTableEntry *get_array_type(CodeGen *g, TypeTableEntry *child_type, uint64_t 
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
 
-            entry->di_type = LLVMZigCreateDebugArrayType(g->dbuilder, debug_size_in_bits,
+            entry->di_type = ZigLLVMCreateDebugArrayType(g->dbuilder, debug_size_in_bits,
                     debug_align_in_bits, child_type->di_type, array_size);
         }
         entry->data.array.child_type = child_type;
@@ -524,11 +525,11 @@ TypeTableEntry *get_slice_type(CodeGen *g, TypeTableEntry *child_type, bool is_c
         buf_appendf(&entry->name, "[]%s", buf_ptr(&child_type->name));
         entry->type_ref = LLVMStructCreateNamed(LLVMGetGlobalContext(), buf_ptr(&entry->name));
 
-        LLVMZigDIScope *compile_unit_scope = LLVMZigCompileUnitToScope(g->compile_unit);
-        LLVMZigDIFile *di_file = nullptr;
+        ZigLLVMDIScope *compile_unit_scope = ZigLLVMCompileUnitToScope(g->compile_unit);
+        ZigLLVMDIFile *di_file = nullptr;
         unsigned line = 0;
-        entry->di_type = LLVMZigCreateReplaceableCompositeType(g->dbuilder,
-            LLVMZigTag_DW_structure_type(), buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateReplaceableCompositeType(g->dbuilder,
+            ZigLLVMTag_DW_structure_type(), buf_ptr(&entry->name),
             compile_unit_scope, di_file, line);
 
         if (child_type->zero_bits) {
@@ -551,21 +552,21 @@ TypeTableEntry *get_slice_type(CodeGen *g, TypeTableEntry *child_type, bool is_c
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
 
-            LLVMZigDIType *di_element_types[] = {
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+            ZigLLVMDIType *di_element_types[] = {
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "len", di_file, line,
                         len_debug_size_in_bits,
                         len_debug_align_in_bits,
                         len_offset_in_bits,
                         0, isize_type->di_type),
             };
-            LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
+            ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
                     compile_unit_scope,
                     buf_ptr(&entry->name),
                     di_file, line, debug_size_in_bits, debug_align_in_bits, 0,
                     nullptr, di_element_types, 1, 0, nullptr, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
             entry->di_type = replacement_di_type;
         } else {
             TypeTableEntry *pointer_type = get_pointer_to_type(g, child_type, is_const);
@@ -592,27 +593,27 @@ TypeTableEntry *get_slice_type(CodeGen *g, TypeTableEntry *child_type, bool is_c
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
 
-            LLVMZigDIType *di_element_types[] = {
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+            ZigLLVMDIType *di_element_types[] = {
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "ptr", di_file, line,
                         ptr_debug_size_in_bits,
                         ptr_debug_align_in_bits,
                         ptr_offset_in_bits,
                         0, pointer_type->di_type),
-                LLVMZigCreateDebugMemberType(g->dbuilder, LLVMZigTypeToScope(entry->di_type),
+                ZigLLVMCreateDebugMemberType(g->dbuilder, ZigLLVMTypeToScope(entry->di_type),
                         "len", di_file, line,
                         len_debug_size_in_bits,
                         len_debug_align_in_bits,
                         len_offset_in_bits,
                         0, isize_type->di_type),
             };
-            LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
+            ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
                     compile_unit_scope,
                     buf_ptr(&entry->name),
                     di_file, line, debug_size_in_bits, debug_align_in_bits, 0,
                     nullptr, di_element_types, 2, 0, nullptr, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, entry->di_type, replacement_di_type);
             entry->di_type = replacement_di_type;
         }
 
@@ -699,7 +700,7 @@ TypeTableEntry *get_fn_type(CodeGen *g, FnTypeId *fn_type_id) {
         // +1 for maybe making the first argument the return value
         LLVMTypeRef *gen_param_types = allocate<LLVMTypeRef>(1 + fn_type_id->param_count);
         // +1 because 0 is the return type and +1 for maybe making first arg ret val
-        LLVMZigDIType **param_di_types = allocate<LLVMZigDIType*>(2 + fn_type_id->param_count);
+        ZigLLVMDIType **param_di_types = allocate<ZigLLVMDIType*>(2 + fn_type_id->param_count);
         param_di_types[0] = fn_type_id->return_type->di_type;
         int gen_param_index = 0;
         TypeTableEntry *gen_return_type;
@@ -751,7 +752,7 @@ TypeTableEntry *get_fn_type(CodeGen *g, FnTypeId *fn_type_id) {
         fn_type->data.fn.raw_type_ref = LLVMFunctionType(gen_return_type->type_ref,
                 gen_param_types, gen_param_index, fn_type_id->is_var_args);
         fn_type->type_ref = LLVMPointerType(fn_type->data.fn.raw_type_ref, 0);
-        fn_type->di_type = LLVMZigCreateSubroutineType(g->dbuilder, param_di_types, gen_param_index + 1, 0);
+        fn_type->di_type = ZigLLVMCreateSubroutineType(g->dbuilder, param_di_types, gen_param_index + 1, 0);
     }
 
     g->fn_type_table.put(&fn_type->data.fn.fn_type_id, fn_type);
@@ -791,12 +792,20 @@ TypeTableEntry *get_partial_container_type(CodeGen *g, ImportTableEntry *import,
 
     unsigned line = decl_node ? decl_node->line : 0;
 
-    entry->type_ref = LLVMStructCreateNamed(LLVMGetGlobalContext(), name);
-    entry->di_type = LLVMZigCreateReplaceableCompositeType(g->dbuilder,
-        LLVMZigTag_DW_structure_type(), name,
-        LLVMZigFileToScope(import->di_file), import->di_file, line + 1);
+    const char *non_null_name = name ? name : "";
 
-    buf_init_from_str(&entry->name, name);
+    entry->type_ref = LLVMStructCreateNamed(LLVMGetGlobalContext(), non_null_name);
+    entry->di_type = ZigLLVMCreateReplaceableCompositeType(g->dbuilder,
+        ZigLLVMTag_DW_structure_type(), non_null_name,
+        ZigLLVMFileToScope(import->di_file), import->di_file, line + 1);
+
+    if (name) {
+        buf_init_from_str(&entry->name, name);
+    } else {
+        buf_resize(&entry->name, 0);
+        buf_appendf(&entry->name, "(anon struct at %s:%d:%d)", buf_ptr(import->path),
+                decl_node->line + 1, decl_node->column + 1);
+    }
 
     return entry;
 }
@@ -813,7 +822,7 @@ TypeTableEntry *get_underlying_type(TypeTableEntry *type_entry) {
 // If the node does not have a constant expression value with a metatype, generates an error
 // and returns invalid type. Otherwise, returns the type of the constant expression value.
 // Must be called after analyze_expression on the same node.
-static TypeTableEntry *resolve_type(CodeGen *g, AstNode *node) {
+static TypeAlias *resolve_type(CodeGen *g, AstNode *node) {
     if (node->type == NodeTypeSymbol && node->data.symbol_expr.override_type_entry) {
         return node->data.symbol_expr.override_type_entry;
     }
@@ -834,7 +843,7 @@ static TypeTableEntry *resolve_type(CodeGen *g, AstNode *node) {
         return g->builtin_types.entry_invalid;
     }
 
-    return const_val->data.x_type;
+    return const_val->data.x_type.entry;
 }
 
 static TypeTableEntry *analyze_type_expr_pointer_only(CodeGen *g, ImportTableEntry *import,
@@ -1177,13 +1186,13 @@ static void resolve_function_proto(CodeGen *g, AstNode *node, FnTableEntry *fn_t
             bool is_definition = fn_table_entry->fn_def_node != nullptr;
             unsigned flags = 0;
             bool is_optimized = g->is_release_build;
-            LLVMZigDISubprogram *subprogram = LLVMZigCreateFunction(g->dbuilder,
+            ZigLLVMDISubprogram *subprogram = ZigLLVMCreateFunction(g->dbuilder,
                 containing_context->di_scope, buf_ptr(&fn_table_entry->symbol_name), "",
                 import->di_file, line_number,
                 fn_type->di_type, fn_table_entry->internal_linkage,
                 is_definition, scope_line, flags, is_optimized, nullptr);
 
-            fn_table_entry->fn_def_node->data.fn_def.block_context->di_scope = LLVMZigSubprogramToScope(subprogram);
+            fn_table_entry->fn_def_node->data.fn_def.block_context->di_scope = ZigLLVMSubprogramToScope(subprogram);
             ZigLLVMFnSetSubprogram(fn_table_entry->fn_value, subprogram);
         }
     }
@@ -1217,11 +1226,11 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
 
     enum_type->data.enumeration.field_count = field_count;
     enum_type->data.enumeration.fields = allocate<TypeEnumField>(field_count);
-    LLVMZigDIEnumerator **di_enumerators = allocate<LLVMZigDIEnumerator*>(field_count);
+    ZigLLVMDIEnumerator **di_enumerators = allocate<ZigLLVMDIEnumerator*>(field_count);
 
     // we possibly allocate too much here since gen_field_count can be lower than field_count.
     // the only problem is potential wasted space though.
-    LLVMZigDIType **union_inner_di_types = allocate<LLVMZigDIType*>(field_count);
+    ZigLLVMDIType **union_inner_di_types = allocate<ZigLLVMDIType*>(field_count);
 
     TypeTableEntry *biggest_union_member = nullptr;
     uint64_t biggest_align_in_bits = 0;
@@ -1247,7 +1256,7 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
         }
 
 
-        di_enumerators[i] = LLVMZigCreateDebugEnumerator(g->dbuilder, buf_ptr(type_enum_field->name), i);
+        di_enumerators[i] = ZigLLVMCreateDebugEnumerator(g->dbuilder, buf_ptr(type_enum_field->name), i);
 
         if (field_type->id == TypeTableEntryIdStruct) {
             resolve_struct_type(g, import, field_type);
@@ -1263,8 +1272,8 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, field_type->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, field_type->type_ref);
 
-        union_inner_di_types[gen_field_index] = LLVMZigCreateDebugMemberType(g->dbuilder,
-                LLVMZigTypeToScope(enum_type->di_type), buf_ptr(type_enum_field->name),
+        union_inner_di_types[gen_field_index] = ZigLLVMCreateDebugMemberType(g->dbuilder,
+                ZigLLVMTypeToScope(enum_type->di_type), buf_ptr(type_enum_field->name),
                 import->di_file, field_node->line + 1,
                 debug_size_in_bits,
                 debug_align_in_bits,
@@ -1309,21 +1318,21 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
             // create debug type for tag
             uint64_t tag_debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, tag_type_entry->type_ref);
             uint64_t tag_debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, tag_type_entry->type_ref);
-            LLVMZigDIType *tag_di_type = LLVMZigCreateDebugEnumerationType(g->dbuilder,
-                    LLVMZigTypeToScope(enum_type->di_type), "AnonEnum", import->di_file, decl_node->line + 1,
+            ZigLLVMDIType *tag_di_type = ZigLLVMCreateDebugEnumerationType(g->dbuilder,
+                    ZigLLVMTypeToScope(enum_type->di_type), "AnonEnum", import->di_file, decl_node->line + 1,
                     tag_debug_size_in_bits, tag_debug_align_in_bits, di_enumerators, field_count,
                     tag_type_entry->di_type, "");
 
             // create debug type for union
-            LLVMZigDIType *union_di_type = LLVMZigCreateDebugUnionType(g->dbuilder,
-                    LLVMZigTypeToScope(enum_type->di_type), "AnonUnion", import->di_file, decl_node->line + 1,
+            ZigLLVMDIType *union_di_type = ZigLLVMCreateDebugUnionType(g->dbuilder,
+                    ZigLLVMTypeToScope(enum_type->di_type), "AnonUnion", import->di_file, decl_node->line + 1,
                     biggest_union_member_size_in_bits, biggest_align_in_bits, 0, union_inner_di_types,
                     gen_field_index, 0, "");
 
             // create debug types for members of root struct
             uint64_t tag_offset_in_bits = 8*LLVMOffsetOfElement(g->target_data_ref, enum_type->type_ref, 0);
-            LLVMZigDIType *tag_member_di_type = LLVMZigCreateDebugMemberType(g->dbuilder,
-                    LLVMZigTypeToScope(enum_type->di_type), "tag_field",
+            ZigLLVMDIType *tag_member_di_type = ZigLLVMCreateDebugMemberType(g->dbuilder,
+                    ZigLLVMTypeToScope(enum_type->di_type), "tag_field",
                     import->di_file, decl_node->line + 1,
                     tag_debug_size_in_bits,
                     tag_debug_align_in_bits,
@@ -1331,8 +1340,8 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
                     0, tag_di_type);
 
             uint64_t union_offset_in_bits = 8*LLVMOffsetOfElement(g->target_data_ref, enum_type->type_ref, 1);
-            LLVMZigDIType *union_member_di_type = LLVMZigCreateDebugMemberType(g->dbuilder,
-                    LLVMZigTypeToScope(enum_type->di_type), "union_field",
+            ZigLLVMDIType *union_member_di_type = ZigLLVMCreateDebugMemberType(g->dbuilder,
+                    ZigLLVMTypeToScope(enum_type->di_type), "union_field",
                     import->di_file, decl_node->line + 1,
                     biggest_union_member_size_in_bits,
                     biggest_align_in_bits,
@@ -1340,7 +1349,7 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
                     0, union_di_type);
 
             // create debug type for root struct
-            LLVMZigDIType *di_root_members[] = {
+            ZigLLVMDIType *di_root_members[] = {
                 tag_member_di_type,
                 union_member_di_type,
             };
@@ -1348,15 +1357,15 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
 
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, enum_type->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, enum_type->type_ref);
-            LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
-                    LLVMZigFileToScope(import->di_file),
+            ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
+                    ZigLLVMFileToScope(import->di_file),
                     "",
                     import->di_file, decl_node->line + 1,
                     debug_size_in_bits,
                     debug_align_in_bits,
                     0, nullptr, di_root_members, 2, 0, nullptr, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, enum_type->di_type, replacement_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, enum_type->di_type, replacement_di_type);
             enum_type->di_type = replacement_di_type;
         } else {
             // create llvm type for root struct
@@ -1365,8 +1374,8 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
             // create debug type for tag
             uint64_t tag_debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, tag_type_entry->type_ref);
             uint64_t tag_debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, tag_type_entry->type_ref);
-            LLVMZigDIType *tag_di_type = LLVMZigCreateDebugEnumerationType(g->dbuilder,
-                    LLVMZigFileToScope(import->di_file),
+            ZigLLVMDIType *tag_di_type = ZigLLVMCreateDebugEnumerationType(g->dbuilder,
+                    ZigLLVMFileToScope(import->di_file),
                     "",
                     import->di_file, decl_node->line + 1,
                     tag_debug_size_in_bits,
@@ -1374,7 +1383,7 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
                     di_enumerators, field_count,
                     tag_type_entry->di_type, "");
 
-            LLVMZigReplaceTemporary(g->dbuilder, enum_type->di_type, tag_di_type);
+            ZigLLVMReplaceTemporary(g->dbuilder, enum_type->di_type, tag_di_type);
             enum_type->di_type = tag_di_type;
 
         }
@@ -1473,7 +1482,7 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
     int gen_field_count = gen_field_index;
     LLVMStructSetBody(struct_type->type_ref, element_types, gen_field_count, false);
 
-    LLVMZigDIType **di_element_types = allocate<LLVMZigDIType*>(gen_field_count);
+    ZigLLVMDIType **di_element_types = allocate<ZigLLVMDIType*>(gen_field_count);
 
     for (int i = 0; i < field_count; i += 1) {
         AstNode *field_node = decl_node->data.container_expr.fields.at(i);
@@ -1489,8 +1498,8 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, field_type->type_ref);
         uint64_t debug_offset_in_bits = 8*LLVMOffsetOfElement(g->target_data_ref, struct_type->type_ref,
                 gen_field_index);
-        di_element_types[gen_field_index] = LLVMZigCreateDebugMemberType(g->dbuilder,
-                LLVMZigTypeToScope(struct_type->di_type), buf_ptr(type_struct_field->name),
+        di_element_types[gen_field_index] = ZigLLVMCreateDebugMemberType(g->dbuilder,
+                ZigLLVMTypeToScope(struct_type->di_type), buf_ptr(type_struct_field->name),
                 import->di_file, field_node->line + 1,
                 debug_size_in_bits,
                 debug_align_in_bits,
@@ -1503,15 +1512,15 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
 
     uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, struct_type->type_ref);
     uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, struct_type->type_ref);
-    LLVMZigDIType *replacement_di_type = LLVMZigCreateDebugStructType(g->dbuilder,
-            LLVMZigFileToScope(import->di_file),
+    ZigLLVMDIType *replacement_di_type = ZigLLVMCreateDebugStructType(g->dbuilder,
+            ZigLLVMFileToScope(import->di_file),
             "",
             import->di_file, decl_node->line + 1,
             debug_size_in_bits,
             debug_align_in_bits,
             0, nullptr, di_element_types, gen_field_count, 0, nullptr, "");
 
-    LLVMZigReplaceTemporary(g->dbuilder, struct_type->di_type, replacement_di_type);
+    ZigLLVMReplaceTemporary(g->dbuilder, struct_type->di_type, replacement_di_type);
     struct_type->di_type = replacement_di_type;
 
     struct_type->zero_bits = (debug_size_in_bits == 0);
@@ -1740,7 +1749,7 @@ static TypeTableEntry *unwrapped_node_type(AstNode *node) {
     assert(expr->type_entry->id == TypeTableEntryIdMetaType);
     ConstExprValue *const_val = &expr->const_val;
     assert(const_val->ok);
-    return const_val->data.x_type;
+    return const_val->data.x_type.entry;
 }
 
 static TypeTableEntry *get_return_type(BlockContext *context) {
@@ -2812,7 +2821,8 @@ static TypeTableEntry *resolve_expr_const_val_as_type(CodeGen *g, AstNode *node,
 {
     Expr *expr = get_resolved_expr(node);
     expr->const_val.ok = true;
-    expr->const_val.data.x_type = type;
+    expr->const_val.data.x_type.entry = type;
+    expr->const_val.data.x_type.di_type = nullptr;
     expr->const_val.depends_on_compile_var = depends_on_compile_var;
     return g->builtin_types.entry_type;
 }
@@ -3724,9 +3734,18 @@ static VariableTableEntry *analyze_variable_declaration_raw(CodeGen *g, ImportTa
         {
             add_node_error(g, source_node, buf_sprintf("unable to infer variable type"));
             implicit_type = g->builtin_types.entry_invalid;
-        } else if (implicit_type->id == TypeTableEntryIdMetaType && !is_const) {
-            add_node_error(g, source_node, buf_sprintf("variable of type 'type' must be constant"));
-            implicit_type = g->builtin_types.entry_invalid;
+        } else if (implicit_type->id == TypeTableEntryIdMetaType){
+            if (is_const) {
+                ConstExprValue *const_val = &get_resolved_expr(variable_declaration->expr)->const_val;
+                assert(const_val->ok);
+                const_val->data.x_type.di_type = ZigLLVMCreateTypedef(g->dbuilder,
+                        const_val->data.x_type.entry->di_type,
+                        buf_ptr(&variable_declaration->symbol), import->di_file, source_node->line + 1,
+                        context->di_scope);
+            } else {
+                add_node_error(g, source_node, buf_sprintf("variable of type 'type' must be constant"));
+                implicit_type = g->builtin_types.entry_invalid;
+            }
         }
         if (implicit_type->id != TypeTableEntryIdInvalid && !context->fn_entry) {
             ConstExprValue *const_val = &get_resolved_expr(variable_declaration->expr)->const_val;
@@ -6007,7 +6026,7 @@ static TypeTableEntry *analyze_container_expr(CodeGen *g, ImportTableEntry *impo
     assert(!node->data.container_expr.type_entry);
 
     ContainerKind kind = node->data.container_expr.kind;
-    TypeTableEntry *container_type = get_partial_container_type(g, import, parent_context, kind, node, "TODO");
+    TypeTableEntry *container_type = get_partial_container_type(g, import, parent_context, kind, node, nullptr);
 
     node->data.container_expr.type_entry = container_type;
 
@@ -6020,7 +6039,8 @@ static TypeTableEntry *analyze_container_expr(CodeGen *g, ImportTableEntry *impo
 
     Expr *expr = get_resolved_expr(node);
     expr->const_val.ok = true;
-    expr->const_val.data.x_type = container_type;
+    expr->const_val.data.x_type.entry = container_type;
+    expr->const_val.data.x_type.di_type = nullptr;
 
     return g->builtin_types.entry_type;
 }
@@ -6517,12 +6537,12 @@ ImportTableEntry *add_source_file(CodeGen *g, PackageTableEntry *package,
         ast_print(stderr, import_entry->root, 0);
     }
 
-    import_entry->di_file = LLVMZigCreateFile(g->dbuilder, buf_ptr(src_basename), buf_ptr(src_dirname));
+    import_entry->di_file = ZigLLVMCreateFile(g->dbuilder, buf_ptr(src_basename), buf_ptr(src_dirname));
     g->import_table.put(abs_full_path, import_entry);
     g->import_queue.append(import_entry);
 
     import_entry->block_context = new_block_context(import_entry->root, nullptr);
-    import_entry->block_context->di_scope = LLVMZigFileToScope(import_entry->di_file);
+    import_entry->block_context->di_scope = ZigLLVMFileToScope(import_entry->di_file);
 
 
     assert(import_entry->root->type == NodeTypeRoot);
@@ -6873,7 +6893,7 @@ static uint32_t hash_const_val(TypeTableEntry *type, ConstExprValue *const_val) 
         case TypeTableEntryIdBool:
             return const_val->data.x_bool ? 127863866 : 215080464;
         case TypeTableEntryIdMetaType:
-            return hash_ptr(const_val->data.x_type);
+            return hash_ptr(const_val->data.x_type.entry);
         case TypeTableEntryIdVoid:
             return 4149439618;
         case TypeTableEntryIdInt:
@@ -6914,7 +6934,7 @@ static uint32_t hash_const_val(TypeTableEntry *type, ConstExprValue *const_val) 
         case TypeTableEntryIdFn:
             return hash_ptr(const_val->data.x_fn);
         case TypeTableEntryIdTypeDecl:
-            return hash_ptr(const_val->data.x_type);
+            return hash_ptr(const_val->data.x_type.entry);
         case TypeTableEntryIdNamespace:
             return hash_ptr(const_val->data.x_import);
         case TypeTableEntryIdInvalid:

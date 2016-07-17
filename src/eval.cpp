@@ -12,7 +12,7 @@ bool const_values_equal(ConstExprValue *a, ConstExprValue *b, TypeTableEntry *ty
                 ConstEnumValue *enum2 = &b->data.x_enum;
                 if (enum1->tag == enum2->tag) {
                     TypeEnumField *enum_field = &type_entry->data.enumeration.fields[enum1->tag];
-                    if (type_has_bits(enum_field->type_entry)) {
+                    if (type_has_bits(enum_field->type_alias->root)) {
                         zig_panic("TODO const expr analyze enum special value for equality");
                     } else {
                         return true;
@@ -21,7 +21,7 @@ bool const_values_equal(ConstExprValue *a, ConstExprValue *b, TypeTableEntry *ty
                 return false;
             }
         case TypeTableEntryIdMetaType:
-            return a->data.x_type == b->data.x_type;
+            return a->data.x_type->root == b->data.x_type->root;
         case TypeTableEntryIdVoid:
             return true;
         case TypeTableEntryIdPureError:
@@ -421,7 +421,7 @@ static TypeTableEntry *resolve_expr_type(AstNode *node) {
     assert(type_entry->id == TypeTableEntryIdMetaType);
     ConstExprValue *const_val = &expr->const_val;
     assert(const_val->ok);
-    return const_val->data.x_type;
+    return const_val->data.x_type->root;
 }
 
 static bool eval_container_init_expr(EvalFn *ef, AstNode *node, ConstExprValue *out_val) {

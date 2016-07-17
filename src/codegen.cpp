@@ -236,7 +236,7 @@ static TypeTableEntry *get_type_for_type_node(AstNode *node) {
     assert(expr->type_entry->id == TypeTableEntryIdMetaType);
     ConstExprValue *const_val = &expr->const_val;
     assert(const_val->ok);
-    return const_val->data.x_type;
+    return const_val->data.x_type.entry;
 }
 
 static void set_debug_source_node(CodeGen *g, AstNode *node) {
@@ -1102,7 +1102,7 @@ static LLVMValueRef gen_fn_call_expr(CodeGen *g, AstNode *node) {
     }
 
     set_debug_source_node(g, node);
-    LLVMValueRef result = LLVMZigBuildCall(g->builder, fn_val,
+    LLVMValueRef result = ZigLLVMBuildCall(g->builder, fn_val,
             gen_param_values, gen_param_index, fn_type->data.fn.calling_convention, "");
 
     if (src_return_type->id == TypeTableEntryIdUnreachable) {
@@ -2515,9 +2515,9 @@ static LLVMValueRef gen_if_bool_expr(CodeGen *g, AstNode *node) {
 static void gen_var_debug_decl(CodeGen *g, VariableTableEntry *var) {
     BlockContext *block_context = var->block_context;
     AstNode *source_node = var->decl_node;
-    LLVMZigDILocation *debug_loc = LLVMZigGetDebugLoc(source_node->line + 1, source_node->column + 1,
+    ZigLLVMDILocation *debug_loc = ZigLLVMGetDebugLoc(source_node->line + 1, source_node->column + 1,
             block_context->di_scope);
-    LLVMZigInsertDeclareAtEnd(g->dbuilder, var->value_ref, var->di_loc_var, debug_loc,
+    ZigLLVMInsertDeclareAtEnd(g->dbuilder, var->value_ref, var->di_loc_var, debug_loc,
             LLVMGetInsertBlock(g->builder));
 }
 
@@ -3905,13 +3905,13 @@ static void do_code_gen(CodeGen *g) {
         if (!type_has_bits(fn_type->data.fn.fn_type_id.return_type)) {
             // nothing to do
         } else if (fn_type->data.fn.fn_type_id.return_type->id == TypeTableEntryIdPointer) {
-            LLVMZigAddNonNullAttr(fn_table_entry->fn_value, 0);
+            ZigLLVMAddNonNullAttr(fn_table_entry->fn_value, 0);
         } else if (handle_is_ptr(fn_type->data.fn.fn_type_id.return_type) &&
                 !fn_type->data.fn.fn_type_id.is_extern)
         {
             LLVMValueRef first_arg = LLVMGetParam(fn_table_entry->fn_value, 0);
             LLVMAddAttribute(first_arg, LLVMStructRetAttribute);
-            LLVMZigAddNonNullAttr(fn_table_entry->fn_value, 1);
+            ZigLLVMAddNonNullAttr(fn_table_entry->fn_value, 1);
             is_sret = true;
         }
         if (fn_table_entry->is_pure && !is_sret) {
@@ -3944,7 +3944,7 @@ static void do_code_gen(CodeGen *g) {
                 LLVMAddAttribute(argument_val, LLVMReadOnlyAttribute);
             }
             if (param_type->id == TypeTableEntryIdPointer) {
-                LLVMZigAddNonNullAttr(fn_table_entry->fn_value, gen_index + 1);
+                ZigLLVMAddNonNullAttr(fn_table_entry->fn_value, gen_index + 1);
             }
             if (is_byval) {
                 // TODO
@@ -4021,12 +4021,12 @@ static void do_code_gen(CodeGen *g) {
             BlockContext *block_context = fn_table_entry->all_block_contexts.at(bc_i);
 
             if (!block_context->di_scope) {
-                LLVMZigDILexicalBlock *di_block = LLVMZigCreateLexicalBlock(g->dbuilder,
+                ZigLLVMDILexicalBlock *di_block = ZigLLVMCreateLexicalBlock(g->dbuilder,
                     block_context->parent->di_scope,
                     import->di_file,
                     block_context->node->line + 1,
                     block_context->node->column + 1);
-                block_context->di_scope = LLVMZigLexicalBlockToScope(di_block);
+                block_context->di_scope = ZigLLVMLexicalBlockToScope(di_block);
             }
 
 
@@ -4069,7 +4069,7 @@ static void do_code_gen(CodeGen *g) {
                     unsigned align_bytes = ZigLLVMGetPrefTypeAlignment(g->target_data_ref, var->type->type_ref);
                     LLVMSetAlignment(var->value_ref, align_bytes);
                 }
-                var->di_loc_var = LLVMZigCreateParameterVariable(g->dbuilder, var->block_context->di_scope,
+                var->di_loc_var = ZigLLVMCreateParameterVariable(g->dbuilder, var->block_context->di_scope,
                         buf_ptr(&var->name), import->di_file, var->decl_node->line + 1,
                         gen_type->di_type, !g->strip_debug_symbols, 0, var->gen_arg_index + 1);
 
@@ -4080,7 +4080,7 @@ static void do_code_gen(CodeGen *g) {
                 unsigned align_bytes = ZigLLVMGetPrefTypeAlignment(g->target_data_ref, var->type->type_ref);
                 LLVMSetAlignment(var->value_ref, align_bytes);
 
-                var->di_loc_var = LLVMZigCreateAutoVariable(g->dbuilder, var->block_context->di_scope,
+                var->di_loc_var = ZigLLVMCreateAutoVariable(g->dbuilder, var->block_context->di_scope,
                         buf_ptr(&var->name), import->di_file, var->decl_node->line + 1,
                         var->type->di_type, !g->strip_debug_symbols, 0);
             }
@@ -4115,7 +4115,7 @@ static void do_code_gen(CodeGen *g) {
     }
     assert(!g->errors.length);
 
-    LLVMZigDIBuilderFinalize(g->dbuilder);
+    ZigLLVMDIBuilderFinalize(g->dbuilder);
 
     if (g->verbose) {
         LLVMDumpModule(g->module);
@@ -4219,21 +4219,21 @@ static void define_builtin_types(CodeGen *g) {
             unsigned dwarf_tag;
             if (is_signed) {
                 if (size_in_bits == 8) {
-                    dwarf_tag = LLVMZigEncoding_DW_ATE_signed_char();
+                    dwarf_tag = ZigLLVMEncoding_DW_ATE_signed_char();
                 } else {
-                    dwarf_tag = LLVMZigEncoding_DW_ATE_signed();
+                    dwarf_tag = ZigLLVMEncoding_DW_ATE_signed();
                 }
             } else {
                 if (size_in_bits == 8) {
-                    dwarf_tag = LLVMZigEncoding_DW_ATE_unsigned_char();
+                    dwarf_tag = ZigLLVMEncoding_DW_ATE_unsigned_char();
                 } else {
-                    dwarf_tag = LLVMZigEncoding_DW_ATE_unsigned();
+                    dwarf_tag = ZigLLVMEncoding_DW_ATE_unsigned();
                 }
             }
 
             uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
             uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-            entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+            entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                     debug_size_in_bits, debug_align_in_bits, dwarf_tag);
             entry->data.integral.is_signed = is_signed;
             entry->data.integral.is_wrapping = is_wrapping;
@@ -4257,10 +4257,10 @@ static void define_builtin_types(CodeGen *g) {
 
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                is_signed ? LLVMZigEncoding_DW_ATE_signed() : LLVMZigEncoding_DW_ATE_unsigned());
+                is_signed ? ZigLLVMEncoding_DW_ATE_signed() : ZigLLVMEncoding_DW_ATE_unsigned());
         entry->data.integral.is_signed = is_signed;
         entry->data.integral.is_wrapping = !is_signed;
         entry->data.integral.bit_count = size_in_bits;
@@ -4276,10 +4276,10 @@ static void define_builtin_types(CodeGen *g) {
         buf_init_from_str(&entry->name, "bool");
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                LLVMZigEncoding_DW_ATE_boolean());
+                ZigLLVMEncoding_DW_ATE_boolean());
         g->builtin_types.entry_bool = entry;
         g->primitive_type_table.put(&entry->name, entry);
     }
@@ -4303,10 +4303,10 @@ static void define_builtin_types(CodeGen *g) {
 
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                is_signed ? LLVMZigEncoding_DW_ATE_signed() : LLVMZigEncoding_DW_ATE_unsigned());
+                is_signed ? ZigLLVMEncoding_DW_ATE_signed() : ZigLLVMEncoding_DW_ATE_unsigned());
         g->primitive_type_table.put(&entry->name, entry);
 
         if (is_signed && !is_wrapping) {
@@ -4324,10 +4324,10 @@ static void define_builtin_types(CodeGen *g) {
 
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                LLVMZigEncoding_DW_ATE_float());
+                ZigLLVMEncoding_DW_ATE_float());
         g->builtin_types.entry_f32 = entry;
         g->primitive_type_table.put(&entry->name, entry);
     }
@@ -4340,10 +4340,10 @@ static void define_builtin_types(CodeGen *g) {
 
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                LLVMZigEncoding_DW_ATE_float());
+                ZigLLVMEncoding_DW_ATE_float());
         g->builtin_types.entry_f64 = entry;
         g->primitive_type_table.put(&entry->name, entry);
     }
@@ -4356,10 +4356,10 @@ static void define_builtin_types(CodeGen *g) {
 
         uint64_t debug_size_in_bits = 8*LLVMStoreSizeOfType(g->target_data_ref, entry->type_ref);
         uint64_t debug_align_in_bits = 8*LLVMABISizeOfType(g->target_data_ref, entry->type_ref);
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 debug_size_in_bits,
                 debug_align_in_bits,
-                LLVMZigEncoding_DW_ATE_float());
+                ZigLLVMEncoding_DW_ATE_float());
         g->builtin_types.entry_c_long_double = entry;
         g->primitive_type_table.put(&entry->name, entry);
     }
@@ -4369,10 +4369,10 @@ static void define_builtin_types(CodeGen *g) {
         entry->type_ref = LLVMVoidType();
         entry->zero_bits = true;
         buf_init_from_str(&entry->name, "void");
-        entry->di_type = LLVMZigCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
+        entry->di_type = ZigLLVMCreateDebugBasicType(g->dbuilder, buf_ptr(&entry->name),
                 0,
                 0,
-                LLVMZigEncoding_DW_ATE_unsigned());
+                ZigLLVMEncoding_DW_ATE_unsigned());
         g->builtin_types.entry_void = entry;
         g->primitive_type_table.put(&entry->name, entry);
     }
@@ -4694,8 +4694,8 @@ static void init(CodeGen *g, Buf *source_path) {
     const char *target_specific_cpu_args;
     const char *target_specific_features;
     if (g->is_native_target) {
-        target_specific_cpu_args = LLVMZigGetHostCPUName();
-        target_specific_features = LLVMZigGetNativeFeatures();
+        target_specific_cpu_args = ZigLLVMGetHostCPUName();
+        target_specific_features = ZigLLVMGetNativeFeatures();
     } else {
         target_specific_cpu_args = "";
         target_specific_features = "";
@@ -4714,16 +4714,16 @@ static void init(CodeGen *g, Buf *source_path) {
     g->is_big_endian = (LLVMByteOrder(g->target_data_ref) == LLVMBigEndian);
 
     g->builder = LLVMCreateBuilder();
-    g->dbuilder = LLVMZigCreateDIBuilder(g->module, true);
+    g->dbuilder = ZigLLVMCreateDIBuilder(g->module, true);
 
-    LLVMZigSetFastMath(g->builder, true);
+    ZigLLVMSetFastMath(g->builder, true);
 
 
     Buf *producer = buf_sprintf("zig %s", ZIG_VERSION_STRING);
     bool is_optimized = g->is_release_build;
     const char *flags = "";
     unsigned runtime_version = 0;
-    g->compile_unit = LLVMZigCreateCompileUnit(g->dbuilder, LLVMZigLang_DW_LANG_C99(),
+    g->compile_unit = ZigLLVMCreateCompileUnit(g->dbuilder, ZigLLVMLang_DW_LANG_C99(),
             buf_ptr(source_path), buf_ptr(&g->root_package->root_src_dir),
             buf_ptr(producer), is_optimized, flags, runtime_version,
             "", 0, !g->strip_debug_symbols);
@@ -4748,7 +4748,7 @@ void codegen_parseh(CodeGen *g, Buf *src_dirname, Buf *src_basename, Buf *source
 
     init(g, full_path);
 
-    import->di_file = LLVMZigCreateFile(g->dbuilder, buf_ptr(src_basename), buf_ptr(src_dirname));
+    import->di_file = ZigLLVMCreateFile(g->dbuilder, buf_ptr(src_basename), buf_ptr(src_dirname));
 
     ZigList<ErrorMsg *> errors = {0};
     int err = parse_h_buf(import, &errors, source_code, g, nullptr);
