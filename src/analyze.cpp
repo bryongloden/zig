@@ -48,6 +48,7 @@ static VariableTableEntry *analyze_variable_declaration_raw(CodeGen *g, ImportTa
         bool expr_is_maybe, AstNode *decl_node, bool var_is_ptr);
 static void scan_decls(CodeGen *g, ImportTableEntry *import, BlockContext *context, AstNode *node);
 static void analyze_fn_body(CodeGen *g, FnTableEntry *fn_table_entry);
+static void ensure_type_is_complete(CodeGen *g, TypeTableEntry *type_entry);
 
 static AstNode *first_executing_node(AstNode *node) {
     switch (node->type) {
@@ -725,7 +726,7 @@ TypeTableEntry *get_fn_type(CodeGen *g, FnTypeId *fn_type_id) {
             gen_param_info->src_index = i;
             gen_param_info->gen_index = -1;
 
-            assert(type_is_complete(type_entry));
+            ensure_type_is_complete(g, type_entry);
             if (type_has_bits(type_entry)) {
                 TypeTableEntry *gen_type;
                 if (handle_is_ptr(type_entry)) {
@@ -1379,6 +1380,10 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
         }
 
     }
+}
+
+static void resolve_union_type(CodeGen *g, ImportTableEntry *import, TypeTableEntry *struct_type) {
+    zig_panic("TODO");
 }
 
 static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableEntry *struct_type) {
@@ -2340,6 +2345,55 @@ static const char *err_container_init_syntax_name(ContainerInitKind kind) {
     zig_unreachable();
 }
 
+static void ensure_container_complete(CodeGen *g, TypeTableEntry *container_type) {
+    switch (container_type->id) {
+        case TypeTableEntryIdEnum:
+            if (!container_type->data.enumeration.complete) {
+                resolve_enum_type(g, container_type->data.enumeration.decl_node->owner, container_type);
+            }
+            assert(container_type->data.enumeration.complete);
+            break;
+        case TypeTableEntryIdUnion:
+            if (!container_type->data.unionation.complete) {
+                resolve_union_type(g, container_type->data.unionation.decl_node->owner, container_type);
+            }
+            assert(container_type->data.unionation.complete);
+            break;
+        case TypeTableEntryIdStruct:
+            if (!container_type->data.structure.complete) {
+                resolve_struct_type(g, container_type->data.structure.decl_node->owner, container_type);
+            }
+            assert(container_type->data.structure.complete);
+            break;
+
+        case TypeTableEntryIdInvalid:
+        case TypeTableEntryIdMetaType:
+        case TypeTableEntryIdVoid:
+        case TypeTableEntryIdBool:
+        case TypeTableEntryIdUnreachable:
+        case TypeTableEntryIdInt:
+        case TypeTableEntryIdFloat:
+        case TypeTableEntryIdPointer:
+        case TypeTableEntryIdArray:
+        case TypeTableEntryIdNumLitFloat:
+        case TypeTableEntryIdNumLitInt:
+        case TypeTableEntryIdUndefLit:
+        case TypeTableEntryIdMaybe:
+        case TypeTableEntryIdErrorUnion:
+        case TypeTableEntryIdPureError:
+        case TypeTableEntryIdFn:
+        case TypeTableEntryIdTypeDecl:
+        case TypeTableEntryIdNamespace:
+            zig_unreachable();
+    }
+}
+
+static void ensure_type_is_complete(CodeGen *g, TypeTableEntry *type_entry) {
+    if (!type_is_complete(type_entry)) {
+        ensure_container_complete(g, type_entry);
+    }
+}
+
 static TypeTableEntry *analyze_container_init_expr(CodeGen *g, ImportTableEntry *import, BlockContext *context,
         AstNode *node)
 {
@@ -2374,6 +2428,8 @@ static TypeTableEntry *analyze_container_init_expr(CodeGen *g, ImportTableEntry 
                (kind == ContainerInitKindStruct || (kind == ContainerInitKindArray &&
                                                     container_init_expr->entries.length == 0)))
     {
+        ensure_container_complete(g, container_type);
+
         StructValExprCodeGen *codegen = &container_init_expr->resolved_struct_val_expr;
         codegen->type_entry = container_type;
         codegen->source_node = node;
@@ -2532,9 +2588,7 @@ static TypeTableEntry *analyze_field_access_expr(CodeGen *g, ImportTableEntry *i
         TypeTableEntry *bare_struct_type = (struct_type->id == TypeTableEntryIdStruct) ?
             struct_type : struct_type->data.pointer.child_type;
 
-        if (!bare_struct_type->data.structure.complete) {
-            resolve_struct_type(g, bare_struct_type->data.structure.decl_node->owner, bare_struct_type);
-        }
+        ensure_container_complete(g, bare_struct_type);
 
         node->data.field_access_expr.bare_struct_type = bare_struct_type;
         node->data.field_access_expr.type_struct_field = find_struct_type_field(bare_struct_type, field_name);
