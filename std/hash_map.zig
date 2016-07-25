@@ -7,7 +7,7 @@ const want_modification_safety = !@compile_var("is_release");
 const debug_u32 = if (want_modification_safety) u32 else void;
 
 /*
-pub fn HashMap(K: type, V: type, hash: fn(key: K)->u32, eql: fn(a: K, b: K)->bool) {
+pub inline fn HashMap(inline K: type, inline V: type, inline hash: fn(key: K)->u32, inline eql: fn(a: K, b: K)->bool) {
     SmallHashMap(K, V, hash, eql, 8);
 }
 */

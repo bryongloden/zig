@@ -1406,6 +1406,12 @@ fn f() {
 }
     )SOURCE", 1, ".tmp_source.zig:3:13: error: unable to evaluate constant expression");
 
+    add_compile_fail_case("export function with inline parameter", R"SOURCE(
+export fn foo(inline x: i32, y: i32) -> i32{
+    x + y
+}
+    )SOURCE", 1, ".tmp_source.zig:2:15: error: cannot export function with inline parameter");
+
 }
 
 //////////////////////////////////////////////////////////////////////////////

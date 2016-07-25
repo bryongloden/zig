@@ -3734,7 +3734,10 @@ static void delete_unused_builtin_fns(CodeGen *g) {
     }
 }
 
-static bool skip_fn_codegen(CodeGen *g, FnTableEntry *fn_entry) {
+static bool should_skip_fn_codegen(CodeGen *g, FnTableEntry *fn_entry) {
+    if (fn_entry->type_entry->data.fn.fn_type_id.is_inline) {
+        return true;
+    }
     if (g->is_test_build) {
         if (fn_entry->is_test) {
             return false;
@@ -3889,7 +3892,7 @@ static void do_code_gen(CodeGen *g) {
     // Generate function prototypes
     for (int fn_proto_i = 0; fn_proto_i < g->fn_protos.length; fn_proto_i += 1) {
         FnTableEntry *fn_table_entry = g->fn_protos.at(fn_proto_i);
-        if (skip_fn_codegen(g, fn_table_entry)) {
+        if (should_skip_fn_codegen(g, fn_table_entry)) {
             // huge time saver
             LLVMDeleteFunction(fn_table_entry->fn_value);
             fn_table_entry->fn_value = nullptr;
@@ -3995,7 +3998,7 @@ static void do_code_gen(CodeGen *g) {
     // Generate function definitions.
     for (int fn_i = 0; fn_i < g->fn_defs.length; fn_i += 1) {
         FnTableEntry *fn_table_entry = g->fn_defs.at(fn_i);
-        if (skip_fn_codegen(g, fn_table_entry)) {
+        if (should_skip_fn_codegen(g, fn_table_entry)) {
             // huge time saver
             continue;
         }

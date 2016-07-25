@@ -195,10 +195,8 @@ struct AstNodeRoot {
 struct AstNodeFnProto {
     TopLevelDecl top_level_decl;
     Buf name;
-    ZigList<AstNode *> generic_params;
     ZigList<AstNode *> params;
     AstNode *return_type;
-    bool generic_params_is_var_args;
     bool is_var_args;
     bool is_extern;
     bool is_inline;
@@ -230,6 +228,7 @@ struct AstNodeParamDecl {
     Buf name;
     AstNode *type;
     bool is_noalias;
+    bool is_inline;
 
     // populated by semantic analyzer
     VariableTableEntry *variable;
@@ -814,6 +813,7 @@ struct AsmToken {
 // this struct is allocated with allocate_nonzero
 struct FnTypeParamInfo {
     bool is_noalias;
+    bool is_inline;
     TypeTableEntry *type;
 };
 
@@ -841,6 +841,7 @@ struct FnTypeId {
     bool is_naked;
     bool is_cold;
     bool is_extern;
+    bool is_inline;
     FnTypeParamInfo prealloc_param_info[fn_type_id_prealloc_param_info_count];
 };
 
@@ -1063,7 +1064,6 @@ struct FnTableEntry {
     ZigList<LabelTableEntry *> all_labels;
     Buf symbol_name;
     TypeTableEntry *type_entry; // function type
-    bool is_inline;
     bool internal_linkage;
     bool is_extern;
     bool is_test;
@@ -1172,8 +1172,8 @@ struct CodeGen {
 
     ZigList<ImportTableEntry *> import_queue;
     int import_queue_index;
-    ZigList<AstNode *> export_queue;
-    int export_queue_index;
+    ZigList<AstNode *> resolve_queue;
+    int resolve_queue_index;
     ZigList<AstNode *> use_queue;
     int use_queue_index;
 
