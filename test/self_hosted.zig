@@ -718,7 +718,7 @@ fn simple_generic_fn() {
 }
 
 fn max(inline T: type, a: T, b: T) -> T {
-    return if (@const_eval(a) > b) a else b;
+    return if (a > b) a else b;
 }
 
 fn add(inline a: i32, b: i32) -> i32 {
@@ -733,11 +733,6 @@ fn constant_equal_function_pointers() {
 }
 
 fn empty_fn() {}
-
-#attribute("test")
-fn generic_function_equality() {
-    assert(max(i32) == max(i32));
-}
 
 
 #attribute("test")
