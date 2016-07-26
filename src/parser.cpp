@@ -3115,6 +3115,22 @@ static void clone_subtree_list(ZigList<AstNode *> *dest, ZigList<AstNode *> *src
     }
 }
 
+static void clone_subtree_list_omit_inline_params(ZigList<AstNode *> *dest, ZigList<AstNode *> *src,
+        uint32_t *next_node_index)
+{
+    memset(dest, 0, sizeof(ZigList<AstNode *>));
+    dest->ensure_capacity(src->length);
+    for (int i = 0; i < src->length; i += 1) {
+        AstNode *src_node = src->at(i);
+        assert(src_node->type == NodeTypeParamDecl);
+        if (src_node->data.param_decl.is_inline) {
+            continue;
+        }
+        dest->append(ast_clone_subtree(src_node, next_node_index));
+        dest->last()->parent_field = &dest->last();
+    }
+}
+
 static void clone_subtree_list_ptr(ZigList<AstNode *> **dest_ptr, ZigList<AstNode *> *src,
         uint32_t *next_node_index)
 {
@@ -3125,20 +3141,26 @@ static void clone_subtree_list_ptr(ZigList<AstNode *> **dest_ptr, ZigList<AstNod
     }
 }
 
-static void clone_subtree_field(AstNode **dest, AstNode *src, uint32_t *next_node_index) {
+static void clone_subtree_field_special(AstNode **dest, AstNode *src, uint32_t *next_node_index,
+        enum AstCloneSpecial special)
+{
     if (src) {
-        *dest = ast_clone_subtree(src, next_node_index);
+        *dest = ast_clone_subtree_special(src, next_node_index, special);
         (*dest)->parent_field = dest;
     } else {
         *dest = nullptr;
     }
 }
 
+static void clone_subtree_field(AstNode **dest, AstNode *src, uint32_t *next_node_index) {
+    return clone_subtree_field_special(dest, src, next_node_index, AstCloneSpecialNone);
+}
+
 static void clone_subtree_tld(TopLevelDecl *dest, TopLevelDecl *src, uint32_t *next_node_index) {
     clone_subtree_list_ptr(&dest->directives, src->directives, next_node_index);
 }
 
-AstNode *ast_clone_subtree(AstNode *old_node, uint32_t *next_node_index) {
+AstNode *ast_clone_subtree_special(AstNode *old_node, uint32_t *next_node_index, enum AstCloneSpecial special) {
     AstNode *new_node = allocate_nonzero<AstNode>(1);
     memcpy(new_node, old_node, sizeof(AstNode));
     new_node->create_index = *next_node_index;
@@ -3155,12 +3177,19 @@ AstNode *ast_clone_subtree(AstNode *old_node, uint32_t *next_node_index) {
                     next_node_index);
             clone_subtree_field(&new_node->data.fn_proto.return_type, old_node->data.fn_proto.return_type,
                     next_node_index);
-            clone_subtree_list(&new_node->data.fn_proto.params, &old_node->data.fn_proto.params,
-                    next_node_index);
+
+            if (special == AstCloneSpecialOmitInlineParams) {
+                clone_subtree_list_omit_inline_params(&new_node->data.fn_proto.params, &old_node->data.fn_proto.params,
+                        next_node_index);
+            } else {
+                clone_subtree_list(&new_node->data.fn_proto.params, &old_node->data.fn_proto.params,
+                        next_node_index);
+            }
 
             break;
         case NodeTypeFnDef:
-            clone_subtree_field(&new_node->data.fn_def.fn_proto, old_node->data.fn_def.fn_proto, next_node_index);
+            clone_subtree_field_special(&new_node->data.fn_def.fn_proto, old_node->data.fn_def.fn_proto,
+                    next_node_index, special);
             new_node->data.fn_def.fn_proto->data.fn_proto.fn_def_node = new_node;
             clone_subtree_field(&new_node->data.fn_def.body, old_node->data.fn_def.body, next_node_index);
             break;
@@ -3343,4 +3372,8 @@ AstNode *ast_clone_subtree(AstNode *old_node, uint32_t *next_node_index) {
     }
 
     return new_node;
+}
+
+AstNode *ast_clone_subtree(AstNode *old_node, uint32_t *next_node_index) {
+    return ast_clone_subtree_special(old_node, next_node_index, AstCloneSpecialNone);
 }

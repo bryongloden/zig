@@ -42,7 +42,7 @@ pub struct SmallList(T: type, STATIC_SIZE: isize) {
         if (better_capacity != old_capacity) {
             if (l.items.ptr == &l.prealloc_items[0]) {
                 l.items = %return l.allocator.alloc(T, better_capacity);
-                mem.copy(l.items, l.prealloc_items[0...old_capacity]);
+                mem.copy(T, l.items, l.prealloc_items[0...old_capacity]);
             } else {
                 l.items = %return l.allocator.realloc(T, l.items, better_capacity);
             }
@@ -51,9 +51,9 @@ pub struct SmallList(T: type, STATIC_SIZE: isize) {
 }
 
 var global_allocator = Allocator {
-    .alloc = global_alloc,
-    .realloc = global_realloc,
-    .free = global_free,
+    .alloc_fn = global_alloc,
+    .realloc_fn = global_realloc,
+    .free_fn = global_free,
     .context = null,
 };
 

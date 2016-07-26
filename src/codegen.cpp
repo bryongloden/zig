@@ -1062,12 +1062,15 @@ static LLVMValueRef gen_fn_call_expr(CodeGen *g, AstNode *node) {
 
     TypeTableEntry *fn_type;
     LLVMValueRef fn_val;
+    AstNode *generic_proto_node;
     if (fn_table_entry) {
         fn_val = fn_table_entry->fn_value;
         fn_type = fn_table_entry->type_entry;
+        generic_proto_node = fn_table_entry->proto_node->data.fn_proto.generic_proto_node;
     } else {
         fn_val = gen_expr(g, fn_ref_expr);
         fn_type = get_expr_type(fn_ref_expr);
+        generic_proto_node = nullptr;
     }
 
     TypeTableEntry *src_return_type = fn_type->data.fn.fn_type_id.return_type;
@@ -1093,8 +1096,14 @@ static LLVMValueRef gen_fn_call_expr(CodeGen *g, AstNode *node) {
         gen_param_index += 1;
     }
 
-    for (int i = 0; i < fn_call_param_count; i += 1) {
-        AstNode *expr_node = node->data.fn_call_expr.params.at(i);
+    for (int call_i = 0; call_i < fn_call_param_count; call_i += 1) {
+        int proto_i = call_i + (struct_type ? 1 : 0);
+        if (generic_proto_node &&
+            generic_proto_node->data.fn_proto.params.at(proto_i)->data.param_decl.is_inline)
+        {
+            continue;
+        }
+        AstNode *expr_node = node->data.fn_call_expr.params.at(call_i);
         LLVMValueRef param_value = gen_expr(g, expr_node);
         assert(param_value);
         TypeTableEntry *param_type = get_expr_type(expr_node);

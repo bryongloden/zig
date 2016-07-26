@@ -213,15 +213,15 @@ pub fn parse_unsigned(inline T: type, buf: []u8, radix: u8) -> %T {
 
     for (buf) |c| {
         const digit = %return char_to_digit(c, radix);
-        x = %return math.mul_with_overflow(T, x, radix);
-        x = %return math.add_with_overflow(T, x, digit);
+        x = %return math.mul_overflow(T, x, radix);
+        x = %return math.add_overflow(T, x, digit);
     }
 
     return x;
 }
 
 pub error InvalidChar;
-fn char_to_digit(c: u8, radix: u8) -> u8 {
+fn char_to_digit(c: u8, radix: u8) -> %u8 {
     const value = if ('0' <= c && c <= '9') {
         c - '0'
     } else if ('A' <= c && c <= 'Z') {
@@ -230,7 +230,7 @@ fn char_to_digit(c: u8, radix: u8) -> u8 {
         c - 'a' + 10
     } else {
         return error.InvalidChar;
-    }
+    };
     return if (value >= radix) error.InvalidChar else value;
 }
 
@@ -244,9 +244,11 @@ pub fn buf_print_signed(inline T: type, out_buf: []u8, x: T) -> isize {
     }
 }
 
-pub const buf_print_i64 = buf_print_signed(i64);
+pub fn buf_print_i64(out_buf: []u8, x: i64) -> isize {
+    buf_print_signed(i64, out_buf, x)
+}
 
-pub fn buf_print_unsigned(T: type, out_buf: []u8, x: T) -> isize {
+pub fn buf_print_unsigned(inline T: type, out_buf: []u8, x: T) -> isize {
     var buf: [max_u64_base10_digits]u8 = undefined;
     var a = x;
     var index: isize = buf.len;
@@ -267,7 +269,9 @@ pub fn buf_print_unsigned(T: type, out_buf: []u8, x: T) -> isize {
     return len;
 }
 
-pub const buf_print_u64 = buf_print_unsigned(u64);
+pub fn buf_print_u64(out_buf: []u8, x: u64) -> isize {
+    buf_print_unsigned(u64, out_buf, x)
+}
 
 pub fn buf_print_f64(out_buf: []u8, x: f64, decimals: isize) -> isize {
     const numExpBits = 11;

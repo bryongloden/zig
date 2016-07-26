@@ -24,12 +24,12 @@ pub struct Allocator {
     }
 
     fn alloc(self: &Allocator, inline T: type, n: isize) -> %[]T {
-        const byte_count = %return math.mul_with_overflow(isize, @sizeof(T), n);
+        const byte_count = %return math.mul_overflow(isize, @sizeof(T), n);
         ([]T)(%return self.alloc_fn(self, byte_count))
     }
 
     fn realloc(self: &Allocator, inline T: type, old_mem: []T, n: isize) -> %[]T {
-        const byte_count = %return math.mul_with_overflow(isize, @sizeof(T), n);
+        const byte_count = %return math.mul_overflow(isize, @sizeof(T), n);
         ([]T)(%return self.realloc_fn(self, ([]u8)(old_mem), byte_count))
     }
 

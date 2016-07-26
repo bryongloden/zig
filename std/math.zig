@@ -26,11 +26,11 @@ pub fn f64_is_inf(f: f64) -> bool {
     f == f64_get_neg_inf() || f == f64_get_pos_inf()
 }
 
-pub fn min(T: type, x: T, y: T) -> T {
+pub fn min(inline T: type, x: T, y: T) -> T {
     if (x < y) x else y
 }
 
-pub fn max(T: type, x: T, y: T) -> T {
+pub fn max(inline T: type, x: T, y: T) -> T {
     if (x > y) x else y
 }
 

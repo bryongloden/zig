@@ -208,7 +208,10 @@ struct AstNodeFnProto {
     FnTableEntry *fn_table_entry;
     bool skip;
     Expr resolved_expr;
-    TypeTableEntry *generic_fn_type;
+    // computed from params field
+    int inline_arg_count;
+    // if this is a generic function implementation, this points to the generic node
+    AstNode *generic_proto_node;
 };
 
 struct AstNodeFnDef {
@@ -217,6 +220,7 @@ struct AstNodeFnDef {
 
     // populated by semantic analyzer
     TypeTableEntry *implicit_return_type;
+    // the first child block context
     BlockContext *block_context;
 };
 
@@ -813,7 +817,6 @@ struct AsmToken {
 // this struct is allocated with allocate_nonzero
 struct FnTypeParamInfo {
     bool is_noalias;
-    bool is_inline;
     TypeTableEntry *type;
 };
 

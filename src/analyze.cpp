@@ -32,6 +32,8 @@ static TypeTableEntry *analyze_block_expr(CodeGen *g, ImportTableEntry *import, 
 static TypeTableEntry *resolve_expr_const_val_as_void(CodeGen *g, AstNode *node);
 static TypeTableEntry *resolve_expr_const_val_as_fn(CodeGen *g, AstNode *node, FnTableEntry *fn,
         bool depends_on_compile_var);
+static TypeTableEntry *resolve_expr_const_val_as_generic_fn(CodeGen *g, AstNode *node,
+        TypeTableEntry *type_entry, bool depends_on_compile_var);
 static TypeTableEntry *resolve_expr_const_val_as_type(CodeGen *g, AstNode *node, TypeTableEntry *type,
         bool depends_on_compile_var);
 static TypeTableEntry *resolve_expr_const_val_as_unsigned_num_lit(CodeGen *g, AstNode *node,
@@ -896,7 +898,6 @@ static TypeTableEntry *analyze_fn_proto_type(CodeGen *g, ImportTableEntry *impor
         case TypeTableEntryIdNumLitFloat:
         case TypeTableEntryIdNumLitInt:
         case TypeTableEntryIdUndefLit:
-        case TypeTableEntryIdUnreachable:
         case TypeTableEntryIdNamespace:
         case TypeTableEntryIdGenericFn:
             fn_proto->skip = true;
@@ -909,8 +910,10 @@ static TypeTableEntry *analyze_fn_proto_type(CodeGen *g, ImportTableEntry *impor
                 add_node_error(g, fn_proto->return_type,
                     buf_sprintf("function with return type '%s' must be declared inline",
                         buf_ptr(&fn_type_id.return_type->name)));
+                return g->builtin_types.entry_invalid;
             }
             break;
+        case TypeTableEntryIdUnreachable:
         case TypeTableEntryIdVoid:
         case TypeTableEntryIdBool:
         case TypeTableEntryIdInt:
@@ -931,6 +934,7 @@ static TypeTableEntry *analyze_fn_proto_type(CodeGen *g, ImportTableEntry *impor
     for (int i = 0; i < fn_type_id.param_count; i += 1) {
         AstNode *child = fn_proto->params.at(i);
         assert(child->type == NodeTypeParamDecl);
+
         TypeTableEntry *type_entry = analyze_type_expr(g, import, context,
                 child->data.param_decl.type);
         switch (type_entry->id) {
@@ -1145,6 +1149,10 @@ static void resolve_function_proto(CodeGen *g, AstNode *node, FnTableEntry *fn_t
         return;
     }
 
+    if (fn_proto->is_inline) {
+        zig_panic("TODO support inline functions");
+    }
+
 
     Buf *symbol_name;
     if (is_c_compat) {
@@ -1207,7 +1215,6 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
     assert(enum_type->id == TypeTableEntryIdEnum);
 
     AstNode *decl_node = enum_type->data.enumeration.decl_node;
-    assert(decl_node->type == NodeTypeContainerDecl);
 
     if (enum_type->data.enumeration.embedded_in_current) {
         if (!enum_type->data.enumeration.reported_infinite_err) {
@@ -1222,6 +1229,7 @@ static void resolve_enum_type(CodeGen *g, ImportTableEntry *import, TypeTableEnt
         return;
     }
 
+    assert(decl_node->type == NodeTypeContainerDecl);
     assert(enum_type->di_type);
 
     enum_type->deep_const = true;
@@ -1400,7 +1408,6 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
     assert(struct_type->id == TypeTableEntryIdStruct);
 
     AstNode *decl_node = struct_type->data.structure.decl_node;
-    assert(decl_node->type == NodeTypeContainerDecl);
 
     if (struct_type->data.structure.embedded_in_current) {
         struct_type->data.structure.is_invalid = true;
@@ -1417,7 +1424,7 @@ static void resolve_struct_type(CodeGen *g, ImportTableEntry *import, TypeTableE
         return;
     }
 
-
+    assert(decl_node->type == NodeTypeContainerDecl);
     assert(struct_type->di_type);
 
     struct_type->deep_const = true;
@@ -1555,26 +1562,18 @@ static void preview_generic_fn_proto(CodeGen *g, ImportTableEntry *import, AstNo
     node->data.struct_decl.generic_fn_type = get_generic_fn_type(g, node);
 }
 
-static bool any_args_inline(AstNode *proto_node) {
-    assert(proto_node->type == NodeTypeFnProto);
-    for (int i = 0; i < proto_node->data.fn_proto.params.length; i += 1) {
-        AstNode *param_node = proto_node->data.fn_proto.params.at(i);
-        assert(param_node->type == NodeTypeParamDecl);
-        if (param_node->data.param_decl.is_inline) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static void preview_fn_proto_instance(CodeGen *g, ImportTableEntry *import, AstNode *proto_node,
         BlockContext *containing_context)
 {
+    assert(proto_node->type == NodeTypeFnProto);
+
     if (proto_node->data.fn_proto.skip) {
         return;
     }
 
-    bool is_generic_instance = any_args_inline(proto_node);
+    bool is_generic_instance = proto_node->data.fn_proto.generic_proto_node;
+    bool is_generic_fn = proto_node->data.fn_proto.inline_arg_count > 0;
+    assert(!is_generic_instance || !is_generic_fn);
 
     AstNode *parent_decl = proto_node->data.fn_proto.top_level_decl.parent_decl;
     Buf *proto_name = &proto_node->data.fn_proto.name;
@@ -1598,30 +1597,48 @@ static void preview_fn_proto_instance(CodeGen *g, ImportTableEntry *import, AstN
 
     get_fully_qualified_decl_name(&fn_table_entry->symbol_name, proto_node, '_');
 
-    g->fn_protos.append(fn_table_entry);
-
-    if (fn_def_node) {
-        g->fn_defs.append(fn_table_entry);
-    }
-
-    bool is_main_fn = !is_generic_instance &&
-        !parent_decl && (import == g->root_import) &&
-        buf_eql_str(proto_name, "main");
-    if (is_main_fn) {
-        g->main_fn = fn_table_entry;
-    }
-
     proto_node->data.fn_proto.fn_table_entry = fn_table_entry;
-    resolve_function_proto(g, proto_node, fn_table_entry, import, containing_context);
 
-    if (is_main_fn && !g->link_libc) {
-        TypeTableEntry *err_void = get_error_type(g, g->builtin_types.entry_void);
-        TypeTableEntry *actual_return_type = fn_table_entry->type_entry->data.fn.fn_type_id.return_type;
-        if (actual_return_type != err_void) {
-            AstNode *return_type_node = fn_table_entry->proto_node->data.fn_proto.return_type;
-            add_node_error(g, return_type_node,
-                    buf_sprintf("expected return type of main to be '%%void', instead is '%s'",
-                        buf_ptr(&actual_return_type->name)));
+    if (is_generic_fn) {
+        fn_table_entry->type_entry = get_generic_fn_type(g, proto_node);
+
+        if (is_extern || proto_node->data.fn_proto.top_level_decl.visib_mod == VisibModExport) {
+            for (int i = 0; i < proto_node->data.fn_proto.params.length; i += 1) {
+                AstNode *param_decl_node = proto_node->data.fn_proto.params.at(i);
+                if (param_decl_node->data.param_decl.is_inline) {
+                    proto_node->data.fn_proto.skip = true;
+                    add_node_error(g, param_decl_node,
+                            buf_sprintf("inline parameter not allowed in extern function"));
+                }
+            }
+        }
+
+
+    } else {
+        g->fn_protos.append(fn_table_entry);
+
+        if (fn_def_node) {
+            g->fn_defs.append(fn_table_entry);
+        }
+
+        bool is_main_fn = !is_generic_instance &&
+            !parent_decl && (import == g->root_import) &&
+            buf_eql_str(proto_name, "main");
+        if (is_main_fn) {
+            g->main_fn = fn_table_entry;
+        }
+
+        resolve_function_proto(g, proto_node, fn_table_entry, import, containing_context);
+
+        if (is_main_fn && !g->link_libc) {
+            TypeTableEntry *err_void = get_error_type(g, g->builtin_types.entry_void);
+            TypeTableEntry *actual_return_type = fn_table_entry->type_entry->data.fn.fn_type_id.return_type;
+            if (actual_return_type != err_void) {
+                AstNode *return_type_node = fn_table_entry->proto_node->data.fn_proto.return_type;
+                add_node_error(g, return_type_node,
+                        buf_sprintf("expected return type of main to be '%%void', instead is '%s'",
+                            buf_ptr(&actual_return_type->name)));
+            }
         }
     }
 }
@@ -2638,7 +2655,11 @@ static TypeTableEntry *analyze_field_access_expr(CodeGen *g, ImportTableEntry *i
 
                 node->data.field_access_expr.is_member_fn = true;
                 FnTableEntry *fn_entry = fn_decl_node->data.fn_proto.fn_table_entry;
-                return resolve_expr_const_val_as_fn(g, node, fn_entry, false);
+                if (fn_entry->type_entry->id == TypeTableEntryIdGenericFn) {
+                    return resolve_expr_const_val_as_generic_fn(g, node, fn_entry->type_entry, false);
+                } else {
+                    return resolve_expr_const_val_as_fn(g, node, fn_entry, false);
+                }
             } else {
                 add_node_error(g, node, buf_sprintf("no function named '%s' in '%s'",
                     buf_ptr(field_name), buf_ptr(&bare_struct_type->name)));
@@ -3044,7 +3065,11 @@ static TypeTableEntry *analyze_decl_ref(CodeGen *g, AstNode *source_node, AstNod
     } else if (decl_node->type == NodeTypeFnProto) {
         FnTableEntry *fn_entry = decl_node->data.fn_proto.fn_table_entry;
         assert(fn_entry->type_entry);
-        return resolve_expr_const_val_as_fn(g, source_node, fn_entry, depends_on_compile_var);
+        if (fn_entry->type_entry->id == TypeTableEntryIdGenericFn) {
+            return resolve_expr_const_val_as_generic_fn(g, source_node, fn_entry->type_entry, depends_on_compile_var);
+        } else {
+            return resolve_expr_const_val_as_fn(g, source_node, fn_entry, depends_on_compile_var);
+        }
     } else if (decl_node->type == NodeTypeContainerDecl) {
         if (decl_node->data.struct_decl.generic_params.length > 0) {
             TypeTableEntry *type_entry = decl_node->data.struct_decl.generic_fn_type;
@@ -5270,6 +5295,8 @@ static TypeTableEntry *analyze_builtin_fn_call_expr(CodeGen *g, ImportTableEntry
     zig_unreachable();
 }
 
+// Before calling this function, set node->data.fn_call_expr.fn_table_entry if the function is known
+// at compile time. Otherwise this is a function pointer call.
 static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import, BlockContext *context,
         TypeTableEntry *expected_type, AstNode *node, TypeTableEntry *fn_type,
         AstNode *struct_node)
@@ -5280,26 +5307,30 @@ static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import,
         return fn_type;
     }
 
-    // count parameters
-    int src_param_count = fn_type->data.fn.fn_type_id.param_count;
-    int actual_param_count = node->data.fn_call_expr.params.length;
+    // The function call might include inline parameters which we need to ignore according to the
+    // fn_type.
+    FnTableEntry *fn_table_entry = node->data.fn_call_expr.fn_entry;
+    AstNode *generic_proto_node = fn_table_entry ?
+        fn_table_entry->proto_node->data.fn_proto.generic_proto_node : nullptr;
 
-    if (struct_node) {
-        actual_param_count += 1;
-    }
+    // count parameters
+    int struct_node_1_or_0 = struct_node ? 1 : 0;
+    int src_param_count = fn_type->data.fn.fn_type_id.param_count +
+        (generic_proto_node ? generic_proto_node->data.fn_proto.inline_arg_count : 0);
+    int call_param_count = node->data.fn_call_expr.params.length;
 
     bool ok_invocation = true;
 
     if (fn_type->data.fn.fn_type_id.is_var_args) {
-        if (actual_param_count < src_param_count) {
+        if (call_param_count < src_param_count - struct_node_1_or_0) {
             ok_invocation = false;
             add_node_error(g, node,
-                buf_sprintf("expected at least %d arguments, got %d", src_param_count, actual_param_count));
+                buf_sprintf("expected at least %d arguments, got %d", src_param_count, call_param_count));
         }
-    } else if (src_param_count != actual_param_count) {
+    } else if (src_param_count - struct_node_1_or_0 != call_param_count) {
         ok_invocation = false;
         add_node_error(g, node,
-                buf_sprintf("expected %d arguments, got %d", src_param_count, actual_param_count));
+                buf_sprintf("expected %d arguments, got %d", src_param_count, call_param_count));
     }
 
     bool all_args_const_expr = true;
@@ -5313,17 +5344,30 @@ static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import,
 
     // analyze each parameter. in the case of a method, we already analyzed the
     // first parameter in order to figure out which struct we were calling a method on.
-    for (int i = 0; i < node->data.fn_call_expr.params.length; i += 1) {
-        AstNode **child = &node->data.fn_call_expr.params.at(i);
+    int next_type_i = struct_node_1_or_0;
+    for (int call_i = 0; call_i < call_param_count; call_i += 1) {
+        int proto_i = call_i + struct_node_1_or_0;
+        AstNode **param_node = &node->data.fn_call_expr.params.at(call_i);
         // determine the expected type for each parameter
         TypeTableEntry *expected_param_type = nullptr;
-        int fn_proto_i = i + (struct_node ? 1 : 0);
-        if (fn_proto_i < src_param_count) {
-            expected_param_type = fn_type->data.fn.fn_type_id.param_info[fn_proto_i].type;
-        }
-        analyze_expression(g, import, context, expected_param_type, *child);
+        if (proto_i < src_param_count) {
+            if (generic_proto_node &&
+                generic_proto_node->data.fn_proto.params.at(proto_i)->data.param_decl.is_inline)
+            {
+                continue;
+            }
 
-        ConstExprValue *const_arg_val = &get_resolved_expr(*child)->const_val;
+            FnTypeParamInfo *param_info = &fn_type->data.fn.fn_type_id.param_info[next_type_i];
+            next_type_i += 1;
+
+            expected_param_type = param_info->type;
+        }
+        TypeTableEntry *param_type = analyze_expression(g, import, context, expected_param_type, *param_node);
+        if (param_type->id == TypeTableEntryIdInvalid) {
+            return param_type;
+        }
+
+        ConstExprValue *const_arg_val = &get_resolved_expr(*param_node)->const_val;
         if (!const_arg_val->ok) {
             all_args_const_expr = false;
         }
@@ -5335,7 +5379,6 @@ static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import,
         return return_type;
     }
 
-    FnTableEntry *fn_table_entry = node->data.fn_call_expr.fn_entry;
     ConstExprValue *result_val = &get_resolved_expr(node)->const_val;
     if (ok_invocation && fn_table_entry && fn_table_entry->is_pure && fn_table_entry->want_pure != WantPureFalse) {
         if (fn_table_entry->anal_state == FnAnalStateReady) {
@@ -5367,14 +5410,103 @@ static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import,
     return return_type;
 }
 
-static TypeTableEntry *analyze_fn_call_raw(CodeGen *g, ImportTableEntry *import, BlockContext *context,
-        TypeTableEntry *expected_type, AstNode *node, FnTableEntry *fn_table_entry, AstNode *struct_node)
+static TypeTableEntry *analyze_fn_call_with_inline_args(CodeGen *g, ImportTableEntry *import,
+        BlockContext *parent_context, TypeTableEntry *expected_type, AstNode *call_node,
+        FnTableEntry *fn_table_entry, AstNode *struct_node)
 {
-    assert(node->type == NodeTypeFnCallExpr);
+    assert(call_node->type == NodeTypeFnCallExpr);
+    assert(fn_table_entry);
 
-    node->data.fn_call_expr.fn_entry = fn_table_entry;
+    AstNode *decl_node = fn_table_entry->proto_node;
 
-    return analyze_fn_call_ptr(g, import, context, expected_type, node, fn_table_entry->type_entry, struct_node);
+    // count parameters
+    int struct_node_1_or_0 = (struct_node ? 1 : 0);
+    int src_param_count = decl_node->data.fn_proto.params.length;
+    int call_param_count = call_node->data.fn_call_expr.params.length;
+
+    if (src_param_count != call_param_count + struct_node_1_or_0) {
+        add_node_error(g, call_node,
+            buf_sprintf("expected %d arguments, got %d", src_param_count, call_param_count));
+        return g->builtin_types.entry_invalid;
+    }
+
+    int inline_arg_count = decl_node->data.fn_proto.inline_arg_count;
+    assert(inline_arg_count > 0);
+
+    BlockContext *child_context = decl_node->owner->block_context;
+    int next_generic_param_index = 0;
+
+    GenericFnTypeId *generic_fn_type_id = allocate<GenericFnTypeId>(1);
+    generic_fn_type_id->decl_node = decl_node;
+    generic_fn_type_id->generic_param_count = inline_arg_count;
+    generic_fn_type_id->generic_params = allocate<GenericParamValue>(inline_arg_count);
+
+    for (int call_i = 0; call_i < call_param_count; call_i += 1) {
+        int proto_i = call_i + struct_node_1_or_0;
+        AstNode *generic_param_decl_node = decl_node->data.fn_proto.params.at(proto_i);
+        assert(generic_param_decl_node->type == NodeTypeParamDecl);
+        bool is_inline = generic_param_decl_node->data.param_decl.is_inline;
+        if (!is_inline) continue;
+
+        AstNode **generic_param_type_node = &generic_param_decl_node->data.param_decl.type;
+        TypeTableEntry *expected_param_type = analyze_type_expr(g, decl_node->owner, child_context,
+                *generic_param_type_node);
+        if (expected_param_type->id == TypeTableEntryIdInvalid) {
+            return expected_param_type;
+        }
+
+        AstNode **param_node = &call_node->data.fn_call_expr.params.at(call_i);
+        TypeTableEntry *param_type = analyze_expression(g, import, parent_context,
+                expected_param_type, *param_node);
+        if (param_type->id == TypeTableEntryIdInvalid) {
+            return param_type;
+        }
+
+        // set child_context so that the previous param is in scope
+        child_context = new_block_context(generic_param_decl_node, child_context);
+
+        ConstExprValue *const_val = &get_resolved_expr(*param_node)->const_val;
+        if (const_val->ok) {
+            add_local_var(g, generic_param_decl_node, decl_node->owner, child_context,
+                    &generic_param_decl_node->data.param_decl.name, param_type, true, *param_node);
+        } else {
+            add_node_error(g, *param_node,
+                    buf_sprintf("unable to evaluate constant expression for inline parameter"));
+
+            return g->builtin_types.entry_invalid;
+        }
+
+        GenericParamValue *generic_param_value =
+            &generic_fn_type_id->generic_params[next_generic_param_index];
+        generic_param_value->type = param_type;
+        generic_param_value->node = *param_node;
+        next_generic_param_index += 1;
+    }
+
+    assert(next_generic_param_index == inline_arg_count);
+
+    auto entry = g->generic_table.maybe_get(generic_fn_type_id);
+    FnTableEntry *impl_fn;
+    if (entry) {
+        AstNode *impl_decl_node = entry->value;
+        assert(impl_decl_node->type == NodeTypeFnProto);
+        impl_fn = impl_decl_node->data.fn_proto.fn_table_entry;
+    } else {
+        AstNode *decl_node = generic_fn_type_id->decl_node;
+        AstNode *impl_fn_def_node = ast_clone_subtree_special(decl_node->data.fn_proto.fn_def_node,
+                &g->next_node_index, AstCloneSpecialOmitInlineParams);
+        AstNode *impl_decl_node = impl_fn_def_node->data.fn_def.fn_proto;
+        impl_decl_node->data.fn_proto.inline_arg_count = 0;
+        impl_decl_node->data.fn_proto.generic_proto_node = decl_node;
+
+        preview_fn_proto_instance(g, import, impl_decl_node, child_context);
+        g->generic_table.put(generic_fn_type_id, impl_decl_node);
+        impl_fn = impl_decl_node->data.fn_proto.fn_table_entry;
+    }
+
+    call_node->data.fn_call_expr.fn_entry = impl_fn;
+    return analyze_fn_call_ptr(g, import, parent_context, expected_type, call_node,
+            impl_fn->type_entry, struct_node);
 }
 
 static TypeTableEntry *analyze_generic_fn_call(CodeGen *g, ImportTableEntry *import, BlockContext *parent_context,
@@ -5430,10 +5562,6 @@ static TypeTableEntry *analyze_generic_fn_call(CodeGen *g, ImportTableEntry *imp
                     &generic_param_decl_node->data.param_decl.name, param_type, true, *param_node);
         } else {
             add_node_error(g, *param_node, buf_sprintf("unable to evaluate constant expression"));
-
-            add_local_var(g, generic_param_decl_node, decl_node->owner, child_context,
-                    &generic_param_decl_node->data.param_decl.name, g->builtin_types.entry_invalid,
-                    true, nullptr);
 
             return g->builtin_types.entry_invalid;
         }
@@ -5496,10 +5624,32 @@ static TypeTableEntry *analyze_fn_call_expr(CodeGen *g, ImportTableEntry *import
                 struct_node = nullptr;
             }
 
-            return analyze_fn_call_raw(g, import, context, expected_type, node,
-                    const_val->data.x_fn, struct_node);
+            FnTableEntry *fn_table_entry = const_val->data.x_fn;
+            node->data.fn_call_expr.fn_entry = fn_table_entry;
+            return analyze_fn_call_ptr(g, import, context, expected_type, node,
+                    fn_table_entry->type_entry, struct_node);
         } else if (invoke_type_entry->id == TypeTableEntryIdGenericFn) {
-            return analyze_generic_fn_call(g, import, context, expected_type, node, const_val->data.x_type);
+            TypeTableEntry *generic_fn_type = const_val->data.x_type;
+            AstNode *decl_node = generic_fn_type->data.generic_fn.decl_node;
+            if (decl_node->type == NodeTypeFnProto) {
+                AstNode *struct_node;
+                if (fn_ref_expr->type == NodeTypeFieldAccessExpr &&
+                    fn_ref_expr->data.field_access_expr.is_member_fn)
+                {
+                    struct_node = fn_ref_expr->data.field_access_expr.struct_expr;
+                } else {
+                    struct_node = nullptr;
+                }
+
+                FnTableEntry *fn_table_entry = decl_node->data.fn_proto.fn_table_entry;
+                if (fn_table_entry->proto_node->data.fn_proto.skip) {
+                    return g->builtin_types.entry_invalid;
+                }
+                return analyze_fn_call_with_inline_args(g, import, context, expected_type, node,
+                        fn_table_entry, struct_node);
+            } else {
+                return analyze_generic_fn_call(g, import, context, expected_type, node, const_val->data.x_type);
+            }
         } else {
             add_node_error(g, fn_ref_expr,
                 buf_sprintf("type '%s' not a function", buf_ptr(&invoke_type_entry->name)));
@@ -6418,10 +6568,10 @@ static void add_top_level_decl(CodeGen *g, ImportTableEntry *import, BlockContex
     tld->name = name;
 
     bool want_to_resolve = (g->check_unused || g->is_test_build || tld->visib_mod == VisibModExport);
-    bool is_generic = (node->type == NodeTypeFnProto && any_args_inline(node)) ||
+    bool is_generic = (node->type == NodeTypeFnProto && node->data.fn_proto.inline_arg_count > 0) ||
                       (node->type == NodeTypeContainerDecl && node->data.struct_decl.generic_params.length > 0);
     bool is_inline_fn = (node->type == NodeTypeFnProto && node->data.fn_proto.is_inline);
-    if (!is_generic && want_to_resolve && !is_inline_fn) {
+    if ((!is_generic && !is_inline_fn) || want_to_resolve) {
         g->resolve_queue.append(node);
     }
 
@@ -6436,6 +6586,18 @@ static void add_top_level_decl(CodeGen *g, ImportTableEntry *import, BlockContex
         block_context->decl_table.put(name, node);
     }
 }
+
+static int fn_proto_inline_arg_count(AstNode *proto_node) {
+    assert(proto_node->type == NodeTypeFnProto);
+    int result = 0;
+    for (int i = 0; i < proto_node->data.fn_proto.params.length; i += 1) {
+        AstNode *param_node = proto_node->data.fn_proto.params.at(i);
+        assert(param_node->type == NodeTypeParamDecl);
+        result += param_node->data.param_decl.is_inline ? 1 : 0;
+    }
+    return result;
+}
+
 
 static void scan_decls(CodeGen *g, ImportTableEntry *import, BlockContext *context, AstNode *node) {
     switch (node->type) {
@@ -6479,6 +6641,7 @@ static void scan_decls(CodeGen *g, ImportTableEntry *import, BlockContext *conte
                     add_node_error(g, node, buf_sprintf("missing function name"));
                     break;
                 }
+                node->data.fn_proto.inline_arg_count = fn_proto_inline_arg_count(node);
 
                 add_top_level_decl(g, import, context, node, fn_name);
                 break;
@@ -6976,7 +7139,6 @@ uint32_t fn_type_id_hash(FnTypeId *id) {
     for (int i = 0; i < id->param_count; i += 1) {
         FnTypeParamInfo *info = &id->param_info[i];
         result += info->is_noalias ? 892356923 : 0;
-        result += info->is_inline ? 3168465790 : 0;
         result += hash_ptr(info->type);
     }
     return result;
@@ -6997,8 +7159,7 @@ bool fn_type_id_eql(FnTypeId *a, FnTypeId *b) {
         FnTypeParamInfo *b_param_info = &b->param_info[i];
 
         if (a_param_info->type != b_param_info->type ||
-            a_param_info->is_noalias != b_param_info->is_noalias ||
-            a_param_info->is_inline != b_param_info->is_inline)
+            a_param_info->is_noalias != b_param_info->is_noalias)
         {
             return false;
         }
