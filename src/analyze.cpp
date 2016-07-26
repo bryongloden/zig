@@ -704,68 +704,65 @@ TypeTableEntry *get_fn_type(CodeGen *g, FnTypeId *fn_type_id) {
         buf_appendf(&fn_type->name, " -> %s", buf_ptr(&fn_type_id->return_type->name));
     }
 
-    // inline functions never hit codegen
-    if (!fn_type_id->is_inline) {
-        // next, loop over the parameters again and compute debug information
-        // and codegen information
-        bool first_arg_return = !fn_type_id->is_extern && handle_is_ptr(fn_type_id->return_type);
-        // +1 for maybe making the first argument the return value
-        LLVMTypeRef *gen_param_types = allocate<LLVMTypeRef>(1 + fn_type_id->param_count);
-        // +1 because 0 is the return type and +1 for maybe making first arg ret val
-        LLVMZigDIType **param_di_types = allocate<LLVMZigDIType*>(2 + fn_type_id->param_count);
-        param_di_types[0] = fn_type_id->return_type->di_type;
-        int gen_param_index = 0;
-        TypeTableEntry *gen_return_type;
-        if (!type_has_bits(fn_type_id->return_type)) {
-            gen_return_type = g->builtin_types.entry_void;
-        } else if (first_arg_return) {
-            TypeTableEntry *gen_type = get_pointer_to_type(g, fn_type_id->return_type, false);
+    // next, loop over the parameters again and compute debug information
+    // and codegen information
+    bool first_arg_return = !fn_type_id->is_extern && handle_is_ptr(fn_type_id->return_type);
+    // +1 for maybe making the first argument the return value
+    LLVMTypeRef *gen_param_types = allocate<LLVMTypeRef>(1 + fn_type_id->param_count);
+    // +1 because 0 is the return type and +1 for maybe making first arg ret val
+    LLVMZigDIType **param_di_types = allocate<LLVMZigDIType*>(2 + fn_type_id->param_count);
+    param_di_types[0] = fn_type_id->return_type->di_type;
+    int gen_param_index = 0;
+    TypeTableEntry *gen_return_type;
+    if (!type_has_bits(fn_type_id->return_type)) {
+        gen_return_type = g->builtin_types.entry_void;
+    } else if (first_arg_return) {
+        TypeTableEntry *gen_type = get_pointer_to_type(g, fn_type_id->return_type, false);
+        gen_param_types[gen_param_index] = gen_type->type_ref;
+        gen_param_index += 1;
+        // after the gen_param_index += 1 because 0 is the return type
+        param_di_types[gen_param_index] = gen_type->di_type;
+        gen_return_type = g->builtin_types.entry_void;
+    } else {
+        gen_return_type = fn_type_id->return_type;
+    }
+    fn_type->data.fn.gen_return_type = gen_return_type;
+
+    fn_type->data.fn.gen_param_info = allocate<FnGenParamInfo>(fn_type_id->param_count);
+    for (int i = 0; i < fn_type_id->param_count; i += 1) {
+        FnTypeParamInfo *src_param_info = &fn_type->data.fn.fn_type_id.param_info[i];
+        TypeTableEntry *type_entry = src_param_info->type;
+        FnGenParamInfo *gen_param_info = &fn_type->data.fn.gen_param_info[i];
+
+        gen_param_info->src_index = i;
+        gen_param_info->gen_index = -1;
+
+        assert(type_is_complete(type_entry));
+        if (type_has_bits(type_entry)) {
+            TypeTableEntry *gen_type;
+            if (handle_is_ptr(type_entry)) {
+                gen_type = get_pointer_to_type(g, type_entry, true);
+                gen_param_info->is_byval = true;
+            } else {
+                gen_type = type_entry;
+            }
             gen_param_types[gen_param_index] = gen_type->type_ref;
+            gen_param_info->gen_index = gen_param_index;
+            gen_param_info->type = gen_type;
+
             gen_param_index += 1;
+
             // after the gen_param_index += 1 because 0 is the return type
             param_di_types[gen_param_index] = gen_type->di_type;
-            gen_return_type = g->builtin_types.entry_void;
-        } else {
-            gen_return_type = fn_type_id->return_type;
         }
-        fn_type->data.fn.gen_return_type = gen_return_type;
-
-        fn_type->data.fn.gen_param_info = allocate<FnGenParamInfo>(fn_type_id->param_count);
-        for (int i = 0; i < fn_type_id->param_count; i += 1) {
-            FnTypeParamInfo *src_param_info = &fn_type->data.fn.fn_type_id.param_info[i];
-            TypeTableEntry *type_entry = src_param_info->type;
-            FnGenParamInfo *gen_param_info = &fn_type->data.fn.gen_param_info[i];
-
-            gen_param_info->src_index = i;
-            gen_param_info->gen_index = -1;
-
-            assert(type_is_complete(type_entry));
-            if (type_has_bits(type_entry)) {
-                TypeTableEntry *gen_type;
-                if (handle_is_ptr(type_entry)) {
-                    gen_type = get_pointer_to_type(g, type_entry, true);
-                    gen_param_info->is_byval = true;
-                } else {
-                    gen_type = type_entry;
-                }
-                gen_param_types[gen_param_index] = gen_type->type_ref;
-                gen_param_info->gen_index = gen_param_index;
-                gen_param_info->type = gen_type;
-
-                gen_param_index += 1;
-
-                // after the gen_param_index += 1 because 0 is the return type
-                param_di_types[gen_param_index] = gen_type->di_type;
-            }
-        }
-
-        fn_type->data.fn.gen_param_count = gen_param_index;
-
-        fn_type->data.fn.raw_type_ref = LLVMFunctionType(gen_return_type->type_ref,
-                gen_param_types, gen_param_index, fn_type_id->is_var_args);
-        fn_type->type_ref = LLVMPointerType(fn_type->data.fn.raw_type_ref, 0);
-        fn_type->di_type = LLVMZigCreateSubroutineType(g->dbuilder, param_di_types, gen_param_index + 1, 0);
     }
+
+    fn_type->data.fn.gen_param_count = gen_param_index;
+
+    fn_type->data.fn.raw_type_ref = LLVMFunctionType(gen_return_type->type_ref,
+            gen_param_types, gen_param_index, fn_type_id->is_var_args);
+    fn_type->type_ref = LLVMPointerType(fn_type->data.fn.raw_type_ref, 0);
+    fn_type->di_type = LLVMZigCreateSubroutineType(g->dbuilder, param_di_types, gen_param_index + 1, 0);
 
     g->fn_type_table.put(&fn_type->data.fn.fn_type_id, fn_type);
 
@@ -1149,10 +1146,6 @@ static void resolve_function_proto(CodeGen *g, AstNode *node, FnTableEntry *fn_t
         return;
     }
 
-    if (fn_proto->is_inline) {
-        zig_panic("TODO support inline functions");
-    }
-
 
     Buf *symbol_name;
     if (is_c_compat) {
@@ -1166,10 +1159,11 @@ static void resolve_function_proto(CodeGen *g, AstNode *node, FnTableEntry *fn_t
         fn_table_entry->fn_def_node->data.fn_def.block_context = context;
     }
 
-    if (!fn_proto->is_inline) {
-        fn_table_entry->fn_value = LLVMAddFunction(g->module, buf_ptr(symbol_name), fn_type->data.fn.raw_type_ref);
-    }
+    fn_table_entry->fn_value = LLVMAddFunction(g->module, buf_ptr(symbol_name), fn_type->data.fn.raw_type_ref);
 
+    if (fn_proto->is_inline) {
+        LLVMAddFunctionAttr(fn_table_entry->fn_value, LLVMAlwaysInlineAttribute);
+    }
     if (fn_table_entry->is_noinline) {
         LLVMAddFunctionAttr(fn_table_entry->fn_value, LLVMNoInlineAttribute);
     }
@@ -5399,7 +5393,7 @@ static TypeTableEntry *analyze_fn_call_ptr(CodeGen *g, ImportTableEntry *import,
         mark_impure_fn(context);
     }
 
-    if (!fn_type->data.fn.fn_type_id.is_inline && handle_is_ptr(return_type)) {
+    if (handle_is_ptr(return_type)) {
         if (context->fn_entry) {
             context->fn_entry->cast_alloca_list.append(node);
         } else if (!result_val->ok) {
@@ -6568,10 +6562,9 @@ static void add_top_level_decl(CodeGen *g, ImportTableEntry *import, BlockContex
     tld->name = name;
 
     bool want_to_resolve = (g->check_unused || g->is_test_build || tld->visib_mod == VisibModExport);
-    bool is_generic = (node->type == NodeTypeFnProto && node->data.fn_proto.inline_arg_count > 0) ||
-                      (node->type == NodeTypeContainerDecl && node->data.struct_decl.generic_params.length > 0);
-    bool is_inline_fn = (node->type == NodeTypeFnProto && node->data.fn_proto.is_inline);
-    if ((!is_generic && !is_inline_fn) || want_to_resolve) {
+    bool is_generic_container = (node->type == NodeTypeContainerDecl &&
+            node->data.struct_decl.generic_params.length > 0);
+    if (want_to_resolve && !is_generic_container) {
         g->resolve_queue.append(node);
     }
 
