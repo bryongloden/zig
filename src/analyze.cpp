@@ -6848,6 +6848,9 @@ ImportTableEntry *add_source_file(CodeGen *g, PackageTableEntry *package,
     assert(import_entry->root);
     if (g->verbose) {
         ast_print(stderr, import_entry->root, 0);
+        fprintf(stderr, "\nReformatted Source:\n");
+        fprintf(stderr, "---------------------\n");
+        ast_render(stderr, import_entry->root, 4);
     }
 
     import_entry->di_file = LLVMZigCreateFile(g->dbuilder, buf_ptr(src_basename), buf_ptr(src_dirname));

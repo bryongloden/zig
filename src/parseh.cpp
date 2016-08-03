@@ -171,6 +171,7 @@ static AstNode *create_char_lit_node(Context *c, uint8_t value) {
     return node;
 }
 
+// accepts ownership of buf
 static AstNode *create_str_lit_node(Context *c, Buf *buf) {
     AstNode *node = create_node(c, NodeTypeStringLiteral);
     node->data.string_literal.buf = buf;
@@ -1326,7 +1327,7 @@ static void process_macro(Context *c, CTokenize *ctok, Buf *name, const char *ch
             case CTokIdStrLit:
                 if (is_last && is_first) {
                     AstNode *var_node = create_var_decl_node(c, buf_ptr(name),
-                            create_str_lit_node(c, &tok->data.str_lit));
+                            create_str_lit_node(c, buf_create_from_buf(&tok->data.str_lit)));
                     c->macro_table.put(name, var_node);
                 }
                 return;

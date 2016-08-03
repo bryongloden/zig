@@ -22,8 +22,8 @@ struct ParseContext {
     ErrColor err_color;
     uint32_t *next_node_index;
     // These buffers are used freqently so we preallocate them once here.
-    Buf void_buf;
-    Buf empty_buf;
+    Buf *void_buf;
+    Buf *empty_buf;
 };
 
 __attribute__ ((format (printf, 4, 5)))
@@ -86,7 +86,7 @@ static AstNode *ast_create_node(ParseContext *pc, NodeType type, Token *first_to
 
 static AstNode *ast_create_void_type_node(ParseContext *pc, Token *token) {
     AstNode *node = ast_create_node(pc, NodeTypeSymbol, token);
-    node->data.symbol_expr.symbol = &pc->void_buf;
+    node->data.symbol_expr.symbol = pc->void_buf;
     return node;
 }
 
@@ -287,7 +287,7 @@ static AstNode *ast_parse_param_decl(ParseContext *pc, int *token_index) {
         token = &pc->tokens->at(*token_index);
     }
 
-    node->data.param_decl.name = &pc->empty_buf;
+    node->data.param_decl.name = pc->empty_buf;
 
     if (token->id == TokenIdSymbol) {
         Token *next_token = &pc->tokens->at(*token_index + 1);
@@ -1926,7 +1926,7 @@ static AstNode *ast_create_void_expr(ParseContext *pc, Token *token) {
     AstNode *node = ast_create_node(pc, NodeTypeContainerInitExpr, token);
     node->data.container_init_expr.type = ast_create_node(pc, NodeTypeSymbol, token);
     node->data.container_init_expr.kind = ContainerInitKindArray;
-    node->data.container_init_expr.type->data.symbol_expr.symbol = &pc->void_buf;
+    node->data.container_init_expr.type->data.symbol_expr.symbol = pc->void_buf;
     normalize_parent_ptrs(node);
     return node;
 }
@@ -2023,7 +2023,7 @@ static AstNode *ast_parse_fn_proto(ParseContext *pc, int *token_index, bool mand
         *token_index += 1;
         node->data.fn_proto.name = token_buf(fn_name);
     } else {
-        node->data.fn_proto.name = &pc->empty_buf;
+        node->data.fn_proto.name = pc->empty_buf;
     }
 
     ast_parse_param_decl_list(pc, token_index, &node->data.fn_proto.params, &node->data.fn_proto.is_var_args);
@@ -2413,8 +2413,8 @@ AstNode *ast_parse(Buf *buf, ZigList<Token> *tokens, ImportTableEntry *owner,
         ErrColor err_color, uint32_t *next_node_index)
 {
     ParseContext pc = {0};
-    buf_init_from_str(&pc.void_buf, "void");
-    buf_resize(&pc.empty_buf, 0);
+    pc.void_buf = buf_create_from_str("void");
+    pc.empty_buf = buf_create_from_str("");
     pc.err_color = err_color;
     pc.owner = owner;
     pc.buf = buf;

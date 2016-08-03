@@ -163,8 +163,8 @@ enum TokenizeState {
     TokenizeStateSymbol,
     TokenizeStateSymbolFirstC,
     TokenizeStateZero, // "0", which might lead to "0x"
-    TokenizeStateNumberDot,
     TokenizeStateNumber, // "123", "0x123"
+    TokenizeStateNumberDot,
     TokenizeStateFloatFraction, // "123.456", "0x123.456"
     TokenizeStateFloatExponentUnsigned, // "123.456e", "123e", "0x123p"
     TokenizeStateFloatExponentNumber, // "123.456e-", "123.456e5", "123.456e5e-5"
@@ -288,8 +288,10 @@ static void end_token(Tokenize *t) {
 static bool is_exponent_signifier(uint8_t c, int radix) {
     if (radix == 16) {
         return c == 'p' || c == 'P';
-    } else {
+    } else if (radix == 10) {
         return c == 'e' || c == 'E';
+    } else {
+        return false;
     }
 }
 
@@ -339,6 +341,7 @@ void tokenize(Buf *buf, Tokenization *out) {
                     case 'c':
                         t.state = TokenizeStateSymbolFirstC;
                         begin_token(&t, TokenIdSymbol);
+                        buf_append_char(&t.cur_tok->data.str_lit.str, c);
                         break;
                     case ALPHA_EXCEPT_C:
                     case '_':
@@ -356,7 +359,7 @@ void tokenize(Buf *buf, Tokenization *out) {
                         t.state = TokenizeStateNumber;
                         begin_token(&t, TokenIdNumberLiteral);
                         t.radix = 10;
-                        bignum_init_unsigned(&t.cur_tok->data.num_lit.bignum, 0);
+                        bignum_init_unsigned(&t.cur_tok->data.num_lit.bignum, get_digit_value(c));
                         break;
                     case '"':
                         begin_token(&t, TokenIdStringLiteral);
@@ -844,6 +847,7 @@ void tokenize(Buf *buf, Tokenization *out) {
                         break;
                     case SYMBOL_CHAR:
                         t.state = TokenizeStateSymbol;
+                        buf_append_char(&t.cur_tok->data.str_lit.str, c);
                         break;
                     default:
                         t.pos -= 1;
@@ -1038,16 +1042,6 @@ void tokenize(Buf *buf, Tokenization *out) {
                         continue;
                 }
                 break;
-            case TokenizeStateNumberDot:
-                if (c == '.') {
-                    t.pos -= 2;
-                    end_token(&t);
-                    t.state = TokenizeStateStart;
-                    continue;
-                }
-                t.pos -= 1;
-                t.state = TokenizeStateFloatFraction;
-                continue;
             case TokenizeStateNumber:
                 switch (c) {
                     if (c == '.') {
@@ -1075,6 +1069,16 @@ void tokenize(Buf *buf, Tokenization *out) {
                         bignum_increment_by_scalar(&t.cur_tok->data.num_lit.bignum, digit_value);
                     break;
                 }
+            case TokenizeStateNumberDot:
+                if (c == '.') {
+                    t.pos -= 2;
+                    end_token(&t);
+                    t.state = TokenizeStateStart;
+                    continue;
+                }
+                t.pos -= 1;
+                t.state = TokenizeStateFloatFraction;
+                continue;
             case TokenizeStateFloatFraction:
                 {
                     if (is_exponent_signifier(c, t.radix)) {

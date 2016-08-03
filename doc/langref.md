@@ -265,14 +265,13 @@ from codegen.
 ### Literals
 
 #### Character and String Literals
+
 ```
 Literal            Example       Characters   Escapes         Null Term  Type
 
 Byte               'H'           All ASCII    Byte            No         u8
 UTF-8 Bytes        "hello"       All Unicode  Byte & Unicode  No         [5]u8
 UTF-8 C string     c"hello"      All Unicode  Byte & Unicode  Yes        &const u8
-UTF-8 Raw String   r"X(hello)X"  All Unicode  None            No         [5]u8
-UTF-8 Raw C String rc"X(hello)X" All Unicode  None            Yes        &const u8
 ```
 
 ### Escapes
@@ -330,18 +329,16 @@ const c_string_literal =
 In this example the variable `c_string_literal` has type `&const char` and
 has a terminating null byte.
 
-#### Numeric Literals
+#### Number Literals
 
-```
-Number literals     Example      Exponentiation
-
-Decimal integer     98222        N/A
-Hex integer         0xff         N/A
-Octal integer       0o77         N/A
-Binary integer      0b11110000   N/A
-Floating-point      123.0E+77    Optional
-Hex floating point  TODO         TODO
-```
+ Number literals    | Example     | Exponentiation
+--------------------|-------------|--------------
+ Decimal integer    | 98222       | N/A
+ Hex integer        | 0xff        | N/A
+ Octal integer      | 0o77        | N/A
+ Binary integer     | 0b11110000  | N/A
+ Floating point     | 123.0E+77   | Optional
+ Hex floating point | 0x103.70p-5 | Optional
 
 ### Identifiers
 

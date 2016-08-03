@@ -78,6 +78,24 @@ static const char *visib_mod_string(VisibMod mod) {
     zig_unreachable();
 }
 
+static const char *return_string(ReturnKind kind) {
+    switch (kind) {
+        case ReturnKindUnconditional: return "return";
+        case ReturnKindError: return "%return";
+        case ReturnKindMaybe: return "?return";
+    }
+    zig_unreachable();
+}
+
+static const char *defer_string(ReturnKind kind) {
+    switch (kind) {
+        case ReturnKindUnconditional: return "defer";
+        case ReturnKindError: return "%defer";
+        case ReturnKindMaybe: return "?defer";
+    }
+    zig_unreachable();
+}
+
 static const char *extern_string(bool is_extern) {
     return is_extern ? "extern " : "";
 }
@@ -260,7 +278,12 @@ static bool is_digit(uint8_t c) {
 }
 
 static bool is_printable(uint8_t c) {
-    return is_alpha_under(c) || is_digit(c) || c == ' ';
+    static const uint8_t printables[] =
+        " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.~`!@#$%^&*()_-+=\\{}[];'\"?/<>,";
+    for (size_t i = 0; i < array_length(printables); i += 1) {
+        if (c == printables[i]) return true;
+    }
+    return false;
 }
 
 static void string_literal_escape(Buf *source, Buf *dest) {
@@ -422,9 +445,19 @@ static void render_node(AstRender *ar, AstNode *node) {
             fprintf(ar->f, ")\n");
             break;
         case NodeTypeReturnExpr:
-            zig_panic("TODO");
+            {
+                const char *return_str = return_string(node->data.return_expr.kind);
+                fprintf(ar->f, "%s ", return_str);
+                render_node(ar, node->data.return_expr.expr);
+                break;
+            }
         case NodeTypeDefer:
-            zig_panic("TODO");
+            {
+                const char *defer_str = defer_string(node->data.defer.kind);
+                fprintf(ar->f, "%s ", defer_str);
+                render_node(ar, node->data.return_expr.expr);
+                break;
+            }
         case NodeTypeVariableDeclaration:
             {
                 const char *pub_str = visib_mod_string(node->data.variable_declaration.top_level_decl.visib_mod);
@@ -498,11 +531,8 @@ static void render_node(AstRender *ar, AstNode *node) {
         case NodeTypeSymbol:
             {
                 TypeTableEntry *override_type = node->data.symbol_expr.override_type_entry;
-                if (override_type) {
-                    fprintf(ar->f, "%s", buf_ptr(&override_type->name));
-                } else {
-                    fprintf(ar->f, "%s", buf_ptr(node->data.symbol_expr.symbol));
-                }
+                Buf *buf = override_type ? &override_type->name : node->data.symbol_expr.symbol;
+                print_symbol(ar, buf);
             }
             break;
         case NodeTypePrefixOpExpr:
@@ -516,10 +546,14 @@ static void render_node(AstRender *ar, AstNode *node) {
         case NodeTypeFnCallExpr:
             if (node->data.fn_call_expr.is_builtin) {
                 fprintf(ar->f, "@");
+            } else {
+                fprintf(ar->f, "(");
+            }
+            render_node(ar, node->data.fn_call_expr.fn_ref_expr);
+            if (!node->data.fn_call_expr.is_builtin) {
+                fprintf(ar->f, ")");
             }
             fprintf(ar->f, "(");
-            render_node(ar, node->data.fn_call_expr.fn_ref_expr);
-            fprintf(ar->f, ")(");
             for (int i = 0; i < node->data.fn_call_expr.params.length; i += 1) {
                 AstNode *param = node->data.fn_call_expr.params.at(i);
                 if (i != 0) {
