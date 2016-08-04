@@ -612,6 +612,7 @@ static AstNode *ast_parse_primary_expr(ParseContext *pc, int *token_index, bool 
     if (token->id == TokenIdNumberLiteral) {
         AstNode *node = ast_create_node(pc, NodeTypeNumberLiteral, token);
         node->data.number_literal.bignum = token_bignum(token);
+        node->data.number_literal.overflow = token->data.num_lit.overflow;
         *token_index += 1;
         return node;
     } else if (token->id == TokenIdStringLiteral) {

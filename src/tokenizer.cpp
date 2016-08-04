@@ -90,13 +90,10 @@
     case 'c'
 
 #define SYMBOL_CHAR \
-    SYMBOL_CHAR_EXCEPT_C: \
-    case 'c'
-
-#define SYMBOL_CHAR_EXCEPT_C \
     ALPHA_EXCEPT_C: \
     case DIGIT: \
-    case '_'
+    case '_': \
+    case 'c'
 
 #define SYMBOL_START \
     ALPHA: \
@@ -216,6 +213,7 @@ struct Tokenize {
     size_t char_code_end;
     bool unicode;
     uint32_t char_code;
+    BigNum fraction_bignum;
 };
 
 __attribute__ ((format (printf, 2, 3)))
@@ -288,10 +286,8 @@ static void end_token(Tokenize *t) {
 static bool is_exponent_signifier(uint8_t c, int radix) {
     if (radix == 16) {
         return c == 'p' || c == 'P';
-    } else if (radix == 10) {
-        return c == 'e' || c == 'E';
     } else {
-        return false;
+        return c == 'e' || c == 'E';
     }
 }
 
@@ -1043,7 +1039,7 @@ void tokenize(Buf *buf, Tokenization *out) {
                 }
                 break;
             case TokenizeStateNumber:
-                switch (c) {
+                {
                     if (c == '.') {
                         t.state = TokenizeStateNumberDot;
                         break;
@@ -1078,10 +1074,12 @@ void tokenize(Buf *buf, Tokenization *out) {
                 }
                 t.pos -= 1;
                 t.state = TokenizeStateFloatFraction;
+                bignum_init_unsigned(&t.fraction_bignum, 0);
                 continue;
             case TokenizeStateFloatFraction:
                 {
                     if (is_exponent_signifier(c, t.radix)) {
+                        // TODO combine the decimal and fraction together
                         t.state = TokenizeStateFloatExponentUnsigned;
                         break;
                     }
@@ -1090,12 +1088,17 @@ void tokenize(Buf *buf, Tokenization *out) {
                         if (is_symbol_char(c)) {
                             tokenize_error(&t, "invalid character: '%c'", c);
                         }
+                        // TODO combine the decimal and fraction together
                         // not my char
                         t.pos -= 1;
                         end_token(&t);
                         t.state = TokenizeStateStart;
                         continue;
                     }
+                    t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
+                        bignum_multiply_by_scalar(&t.fraction_bignum, digit_value);
+                    t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
+                        bignum_increment_by_scalar(&t.fraction_bignum, digit_value);
                     break;
                 }
             case TokenizeStateFloatExponentUnsigned:
