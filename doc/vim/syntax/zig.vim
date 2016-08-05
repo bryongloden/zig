@@ -25,10 +25,10 @@ syn keyword zigBoolean true false
 syn match zigOperator display "\%(+%\?\|-%\?\|/\|*%\?\|=\|\^\|&\|?\||\|!\|>\|<\|%\|<<%\?\|>>\|&&\|||\)=\?"
 syn match zigArrowCharacter display "->"
 
-syn match zigDecNumber display "\<[0-9]*\%(.[0-9]\+\%([eE][+-]\?[0-9]\+\)\=\)\="
-syn match zigHexNumber display "\<0x[a-fA-F0-9]\+\%(.[0-9]\+\%([pP][+-]\?[0-9]\+\)\?\)\="
+syn match zigDecNumber display "\<[0-9]*\%(.[0-9]\+\)\=\%([eE][+-]\?[0-9]\+\)\="
+syn match zigHexNumber display "\<0x[a-fA-F0-9]\+\%(.[a-fA-F0-9]\+\%([pP][+-]\?[0-9]\+\)\?\)\="
 syn match zigOctNumber display "\<0o[0-7]\+"
-syn match zigBinNumber display "\<0b[01]\+\%(.[01]\+\%([eE][+-]\?[01]\+\)\?\)\="
+syn match zigBinNumber display "\<0b[01]\+\%(.[01]\+\%([eE][+-]\?[0-9]\+\)\?\)\="
 
 
 syn match zigCharacterInvalid display contained /b\?'\zs[\n\r\t']\ze'/

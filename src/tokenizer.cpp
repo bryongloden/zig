@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <limits.h>
+#include <errno.h>
 
 #define WHITESPACE \
          ' ': \
@@ -209,11 +211,15 @@ struct Tokenize {
     Token *cur_tok;
     Tokenization *out;
     uint32_t radix;
+    int32_t exp_add_amt;
+    bool is_exp_negative;
+    bool is_num_lit_float;
     size_t char_code_index;
     size_t char_code_end;
     bool unicode;
     uint32_t char_code;
-    BigNum fraction_bignum;
+    int exponent_in_bin_or_dec;
+    BigNum specified_exponent;
 };
 
 __attribute__ ((format (printf, 2, 3)))
@@ -264,11 +270,73 @@ static void cancel_token(Tokenize *t) {
     t->cur_tok = nullptr;
 }
 
+static void end_float_token(Tokenize *t) {
+    t->cur_tok->data.num_lit.bignum.kind = BigNumKindFloat;
+
+    if (t->radix == 10) {
+        char *str_begin = buf_ptr(t->buf) + t->cur_tok->start_pos;
+        char *str_end;
+        errno = 0;
+        t->cur_tok->data.num_lit.bignum.data.x_float = strtod(str_begin, &str_end);
+        if (errno) {
+            t->cur_tok->data.num_lit.overflow = true;
+            return;
+        }
+        assert(str_end == buf_ptr(t->buf) + t->cur_tok->end_pos);
+        return;
+    }
+
+
+    if (t->specified_exponent.data.x_uint >= INT_MAX) {
+        t->cur_tok->data.num_lit.overflow = true;
+        return;
+    }
+
+    int64_t specified_exponent = t->specified_exponent.data.x_uint;
+    if (t->is_exp_negative) {
+        specified_exponent = -specified_exponent;
+    }
+    t->exponent_in_bin_or_dec += specified_exponent;
+
+    uint64_t significand = t->cur_tok->data.num_lit.bignum.data.x_uint;
+    uint64_t significand_bits;
+    uint64_t exponent_bits;
+    if (significand == 0) {
+        // 0 is all 0's
+        significand_bits = 0;
+        exponent_bits = 0;
+    } else {
+        // normalize the significand
+        if (t->radix == 10) {
+            zig_panic("TODO: decimal floats");
+        } else {
+            int significand_magnitude_in_bin = __builtin_clzll(1) - __builtin_clzll(significand);
+            t->exponent_in_bin_or_dec += significand_magnitude_in_bin;
+            if (!(-1023 <= t->exponent_in_bin_or_dec && t->exponent_in_bin_or_dec < 1023)) {
+                t->cur_tok->data.num_lit.overflow = true;
+            } else {
+                // this should chop off exactly one 1 bit from the top.
+                significand_bits = ((uint64_t)significand << (52 - significand_magnitude_in_bin)) & 0xfffffffffffffULL;
+                exponent_bits = t->exponent_in_bin_or_dec + 1023;
+            }
+        }
+    }
+    uint64_t double_bits = (exponent_bits << 52) | significand_bits;
+    memcpy(&t->cur_tok->data.num_lit.bignum.data.x_float, &double_bits, sizeof(double));
+}
+
 static void end_token(Tokenize *t) {
     assert(t->cur_tok);
     t->cur_tok->end_pos = t->pos + 1;
 
-    if (t->cur_tok->id == TokenIdSymbol) {
+    if (t->cur_tok->id == TokenIdNumberLiteral) {
+        if (t->cur_tok->data.num_lit.overflow) {
+            return;
+        }
+        if (t->is_num_lit_float) {
+            end_float_token(t);
+        }
+    } else if (t->cur_tok->id == TokenIdSymbol) {
         char *token_mem = buf_ptr(t->buf) + t->cur_tok->start_pos;
         int token_len = t->cur_tok->end_pos - t->cur_tok->start_pos;
 
@@ -349,12 +417,18 @@ void tokenize(Buf *buf, Tokenization *out) {
                         t.state = TokenizeStateZero;
                         begin_token(&t, TokenIdNumberLiteral);
                         t.radix = 10;
+                        t.exp_add_amt = 1;
+                        t.exponent_in_bin_or_dec = 0;
+                        t.is_num_lit_float = false;
                         bignum_init_unsigned(&t.cur_tok->data.num_lit.bignum, 0);
                         break;
                     case DIGIT_NON_ZERO:
                         t.state = TokenizeStateNumber;
                         begin_token(&t, TokenIdNumberLiteral);
                         t.radix = 10;
+                        t.exp_add_amt = 1;
+                        t.exponent_in_bin_or_dec = 0;
+                        t.is_num_lit_float = false;
                         bignum_init_unsigned(&t.cur_tok->data.num_lit.bignum, get_digit_value(c));
                         break;
                     case '"':
@@ -1025,10 +1099,12 @@ void tokenize(Buf *buf, Tokenization *out) {
                         break;
                     case 'o':
                         t.radix = 8;
+                        t.exp_add_amt = 3;
                         t.state = TokenizeStateNumber;
                         break;
                     case 'x':
                         t.radix = 16;
+                        t.exp_add_amt = 4;
                         t.state = TokenizeStateNumber;
                         break;
                     default:
@@ -1046,6 +1122,8 @@ void tokenize(Buf *buf, Tokenization *out) {
                     }
                     if (is_exponent_signifier(c, t.radix)) {
                         t.state = TokenizeStateFloatExponentUnsigned;
+                        t.is_num_lit_float = true;
+                        bignum_init_unsigned(&t.specified_exponent, 0);
                         break;
                     }
                     uint32_t digit_value = get_digit_value(c);
@@ -1074,13 +1152,13 @@ void tokenize(Buf *buf, Tokenization *out) {
                 }
                 t.pos -= 1;
                 t.state = TokenizeStateFloatFraction;
-                bignum_init_unsigned(&t.fraction_bignum, 0);
+                t.is_num_lit_float = true;
                 continue;
             case TokenizeStateFloatFraction:
                 {
                     if (is_exponent_signifier(c, t.radix)) {
-                        // TODO combine the decimal and fraction together
                         t.state = TokenizeStateFloatExponentUnsigned;
+                        bignum_init_unsigned(&t.specified_exponent, 0);
                         break;
                     }
                     uint32_t digit_value = get_digit_value(c);
@@ -1088,45 +1166,65 @@ void tokenize(Buf *buf, Tokenization *out) {
                         if (is_symbol_char(c)) {
                             tokenize_error(&t, "invalid character: '%c'", c);
                         }
-                        // TODO combine the decimal and fraction together
+                        // not my char
+                        t.exp_add_amt = 1;
+                        t.pos -= 1;
+                        end_token(&t);
+                        t.state = TokenizeStateStart;
+                        continue;
+                    }
+                    t.exponent_in_bin_or_dec += t.exp_add_amt;
+                    if (t.radix == 10) {
+                        // For now we use strtod to parse decimal floats, so we just have to get to the
+                        // end of the token.
+                        break;
+                    }
+                    t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
+                        bignum_multiply_by_scalar(&t.cur_tok->data.num_lit.bignum, t.radix);
+                    t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
+                        bignum_increment_by_scalar(&t.cur_tok->data.num_lit.bignum, digit_value);
+                    break;
+                }
+            case TokenizeStateFloatExponentUnsigned:
+                switch (c) {
+                    case '+':
+                        t.is_exp_negative = false;
+                        t.state = TokenizeStateFloatExponentNumber;
+                        break;
+                    case '-':
+                        t.is_exp_negative = true;
+                        t.state = TokenizeStateFloatExponentNumber;
+                        break;
+                    default:
+                        // reinterpret as normal exponent number
+                        t.pos -= 1;
+                        t.is_exp_negative = false;
+                        t.state = TokenizeStateFloatExponentNumber;
+                        continue;
+                }
+                break;
+            case TokenizeStateFloatExponentNumber:
+                {
+                    uint32_t digit_value = get_digit_value(c);
+                    if (digit_value >= t.radix) {
+                        if (is_symbol_char(c)) {
+                            tokenize_error(&t, "invalid character: '%c'", c);
+                        }
                         // not my char
                         t.pos -= 1;
                         end_token(&t);
                         t.state = TokenizeStateStart;
                         continue;
                     }
+                    if (t.radix == 10) {
+                        // For now we use strtod to parse decimal floats, so we just have to get to the
+                        // end of the token.
+                        break;
+                    }
                     t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
-                        bignum_multiply_by_scalar(&t.fraction_bignum, digit_value);
+                        bignum_multiply_by_scalar(&t.specified_exponent, 10);
                     t.cur_tok->data.num_lit.overflow = t.cur_tok->data.num_lit.overflow ||
-                        bignum_increment_by_scalar(&t.fraction_bignum, digit_value);
-                    break;
-                }
-            case TokenizeStateFloatExponentUnsigned:
-                switch (c) {
-                    case '+':
-                    case '-':
-                        t.state = TokenizeStateFloatExponentNumber;
-                        break;
-                    default:
-                        // reinterpret as normal exponent number
-                        t.pos -= 1;
-                        t.state = TokenizeStateFloatExponentNumber;
-                        continue;
-                }
-                break;
-            case TokenizeStateFloatExponentNumber:
-                switch (c) {
-                    case DIGIT:
-                        break;
-                    case ALPHA:
-                    case '_':
-                        tokenize_error(&t, "invalid character: '%c'", c);
-                        break;
-                    default:
-                        t.pos -= 1;
-                        end_token(&t);
-                        t.state = TokenizeStateStart;
-                        continue;
+                        bignum_increment_by_scalar(&t.specified_exponent, digit_value);
                 }
                 break;
             case TokenizeStateSawDash:
