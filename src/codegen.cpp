@@ -875,6 +875,9 @@ static LLVMValueRef gen_cast_expr(CodeGen *g, AstNode *node) {
 
                 return cast_expr->tmp_ptr;
             }
+        case CastOpNullToMaybe:
+            // handled by constant expression evaluator
+            zig_unreachable();
         case CastOpErrorWrap:
             {
                 assert(wanted_type->id == TypeTableEntryIdErrorUnion);
@@ -1059,6 +1062,8 @@ static LLVMValueRef gen_cast_expr(CodeGen *g, AstNode *node) {
 
         case CastOpIntToEnum:
             return gen_widen_or_shorten(g, node, actual_type, wanted_type->data.enumeration.tag_type, expr_val);
+        case CastOpEnumToInt:
+            return gen_widen_or_shorten(g, node, actual_type->data.enumeration.tag_type, wanted_type, expr_val);
     }
     zig_unreachable();
 }
@@ -2497,7 +2502,45 @@ static LLVMValueRef gen_return_expr(CodeGen *g, AstNode *node) {
                 }
             }
         case ReturnKindMaybe:
-            zig_panic("TODO");
+            {
+                assert(value_type->id == TypeTableEntryIdMaybe);
+                TypeTableEntry *child_type = value_type->data.maybe.child_type;
+
+                LLVMBasicBlockRef return_block = LLVMAppendBasicBlock(g->cur_fn->fn_value, "MaybeRetReturn");
+                LLVMBasicBlockRef continue_block = LLVMAppendBasicBlock(g->cur_fn->fn_value, "MaybeRetContinue");
+
+                set_debug_source_node(g, node);
+                LLVMValueRef maybe_val_ptr = LLVMBuildStructGEP(g->builder, value, 1, "");
+                LLVMValueRef is_non_null = LLVMBuildLoad(g->builder, maybe_val_ptr, "");
+
+                LLVMValueRef zero = LLVMConstNull(LLVMInt1Type());
+                LLVMValueRef cond_val = LLVMBuildICmp(g->builder, LLVMIntNE, is_non_null, zero, "");
+                LLVMBuildCondBr(g->builder, cond_val, continue_block, return_block);
+
+                LLVMPositionBuilderAtEnd(g->builder, return_block);
+                TypeTableEntry *return_type = g->cur_fn->type_entry->data.fn.fn_type_id.return_type;
+                assert(return_type->id == TypeTableEntryIdMaybe);
+                if (handle_is_ptr(return_type)) {
+                    assert(g->cur_ret_ptr);
+
+                    set_debug_source_node(g, node);
+                    LLVMValueRef maybe_bit_ptr = LLVMBuildStructGEP(g->builder, g->cur_ret_ptr, 1, "");
+                    LLVMBuildStore(g->builder, zero, maybe_bit_ptr);
+                    LLVMBuildRetVoid(g->builder);
+                } else {
+                    LLVMValueRef ret_zero_value = LLVMConstNull(return_type->type_ref);
+                    gen_return(g, node, ret_zero_value, ReturnKnowledgeKnownNull);
+                }
+
+                LLVMPositionBuilderAtEnd(g->builder, continue_block);
+                if (type_has_bits(child_type)) {
+                    set_debug_source_node(g, node);
+                    LLVMValueRef val_ptr = LLVMBuildStructGEP(g->builder, value, 0, "");
+                    return get_handle_value(g, node, val_ptr, child_type);
+                } else {
+                    return nullptr;
+                }
+            }
     }
     zig_unreachable();
 }
@@ -3768,6 +3811,7 @@ static LLVMValueRef gen_const_val(CodeGen *g, TypeTableEntry *type_entry, ConstE
         case TypeTableEntryIdNumLitFloat:
         case TypeTableEntryIdNumLitInt:
         case TypeTableEntryIdUndefLit:
+        case TypeTableEntryIdNullLit:
         case TypeTableEntryIdVoid:
         case TypeTableEntryIdNamespace:
         case TypeTableEntryIdGenericFn:
@@ -4272,6 +4316,12 @@ static void define_builtin_types(CodeGen *g) {
         buf_init_from_str(&entry->name, "(undefined)");
         entry->deep_const = true;
         g->builtin_types.entry_undef = entry;
+    }
+    {
+        TypeTableEntry *entry = new_type_table_entry(TypeTableEntryIdNullLit);
+        buf_init_from_str(&entry->name, "(null)");
+        entry->deep_const = true;
+        g->builtin_types.entry_null = entry;
     }
 
     for (int int_size_i = 0; int_size_i < array_length(int_sizes_in_bits); int_size_i += 1) {

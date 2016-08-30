@@ -45,6 +45,8 @@ bool const_values_equal(ConstExprValue *a, ConstExprValue *b, TypeTableEntry *ty
             zig_panic("TODO");
         case TypeTableEntryIdUndefLit:
             zig_panic("TODO");
+        case TypeTableEntryIdNullLit:
+            zig_panic("TODO");
         case TypeTableEntryIdMaybe:
             zig_panic("TODO");
         case TypeTableEntryIdErrorUnion:
@@ -650,6 +652,10 @@ void eval_const_expr_implicit_cast(CastOp cast_op,
             const_val->data.x_maybe = other_val;
             const_val->ok = true;
             break;
+        case CastOpNullToMaybe:
+            const_val->data.x_maybe = nullptr;
+            const_val->ok = true;
+            break;
         case CastOpErrorWrap:
             const_val->data.x_err.err = nullptr;
             const_val->data.x_err.payload = other_val;
@@ -688,6 +694,9 @@ void eval_const_expr_implicit_cast(CastOp cast_op,
                 const_val->ok = true;
                 break;
             }
+        case CastOpEnumToInt:
+            bignum_init_unsigned(&const_val->data.x_bignum, other_val->data.x_enum.tag);
+            const_val->ok = true;
     }
 }
 
